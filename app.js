@@ -9,7 +9,7 @@ const SUPABASE_ANON_KEY =
 const { createClient } = window.supabase;
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// cache de médiuns e rotação
+// cache em memória
 let mediumsCache = [];
 let rotaMap = {}; // { group_type: last_medium_id }
 
@@ -30,7 +30,7 @@ async function login() {
   }
 
   try {
-    const { data, error } = await sb.auth.signInWithPassword({
+    const { error } = await sb.auth.signInWithPassword({
       email,
       password: senha,
     });
@@ -100,7 +100,8 @@ async function verificarData() {
     return false;
   }
 
-  const diaSemana = new Date(data + "T03:00:00").getDay(); // 2 = terça
+  // getDay: 0 = domingo, 1 = segunda, 2 = terça ...
+  const diaSemana = new Date(data + "T03:00:00").getDay();
 
   let feriados = [];
   try {
@@ -186,7 +187,7 @@ function getNextMediumId(lista, lastId) {
   return lista[idx + 1].id;
 }
 
-// cartões por grupo + destaque do próximo
+// cartões por grupo + destaque do próximo + % faltas
 function renderGrupo(divId, lista, groupType) {
   const div = document.getElementById(divId);
   div.innerHTML = "";
@@ -196,31 +197,67 @@ function renderGrupo(divId, lista, groupType) {
     return;
   }
 
-  const nextId = getNextMediumId(lista, rotaMap[groupType] || null);
+  // em carência NÃO há mesa nem rotação
+  const useRotation = groupType !== "carencia";
+  const nextId = useRotation
+    ? getNextMediumId(lista, rotaMap[groupType] || null)
+    : null;
 
   lista.forEach((m) => {
     const card = document.createElement("div");
     card.className = "medium-card";
-    if (m.id === nextId) {
+
+    if (useRotation && m.id === nextId) {
       card.classList.add("medium-next");
     }
 
-    let radios = `
-      <label><input type="radio" name="${m.id}" value="P"> P</label>
-      <label><input type="radio" name="${m.id}" value="M"> M</label>
-      <label><input type="radio" name="${m.id}" value="F"> F</label>
-    `;
+    // cálculo % de falta
+    const faltas = m.faltas || 0;
+    const presencas = m.presencas || 0;
+    const totalChamadas = faltas + presencas;
+    let percHtml = "";
+    if (totalChamadas > 0) {
+      const perc = Math.round((faltas * 100) / totalChamadas);
+      const classeAlta = perc >= 30 ? "badge-falta-alta" : "";
+      percHtml = `<span class="badge-falta ${classeAlta}">${perc}% falta</span>`;
+    }
 
-    if (m.group_type === "dirigente") {
-      radios += `<label><input type="radio" name="${m.id}" value="PS"> PS</label>`;
+    let radios = "";
+
+    if (groupType === "carencia") {
+      // Carência: só Presente / Falta
+      radios = `
+        <label><input type="radio" name="${m.id}" value="P"> P</label>
+        <label><input type="radio" name="${m.id}" value="F"> F</label>
+      `;
+    } else {
+      // Demais grupos: P / M / F
+      radios = `
+        <label><input type="radio" name="${m.id}" value="P"> P</label>
+        <label><input type="radio" name="${m.id}" value="M"> M</label>
+        <label><input type="radio" name="${m.id}" value="F"> F</label>
+      `;
+
+      // Dirigentes: também PS, em vermelho para o "próximo da vez"
+      if (groupType === "dirigente") {
+        const psClass = useRotation && m.id === nextId ? "ps-next" : "";
+        radios += `
+          <label class="${psClass}">
+            <input type="radio" name="${m.id}" value="PS"> PS
+          </label>
+        `;
+      }
     }
 
     const tagNext =
-      m.id === nextId ? `<span class="tag-next">PRÓXIMO DA VEZ</span>` : "";
+      useRotation && m.id === nextId
+        ? `<span class="tag-next">PRÓXIMO DA VEZ</span>`
+        : "";
 
     card.innerHTML = `
       <div class="medium-name">
-        ${m.name}
+        <span class="medium-name-text">${m.name}</span>
+        ${percHtml}
         ${tagNext}
       </div>
       <div class="medium-options">
@@ -233,7 +270,7 @@ function renderGrupo(divId, lista, groupType) {
 }
 
 // =====================
-// SALVAR CHAMADA + ATUALIZAR ROTAÇÃO
+// SALVAR CHAMADA + ATUALIZAR ROTAÇÃO + ESTATÍSTICAS
 // =====================
 
 async function salvarChamada() {
@@ -274,9 +311,57 @@ async function salvarChamada() {
     return;
   }
 
+  // atualiza contadores de faltas/presenças
+  await atualizarEstatisticas(registros);
+
+  // atualiza rotação (quem foi M ou PS)
   await atualizarRotacao(registros);
 
+  // recarrega tudo (inclusive % de faltas recalculado)
+  await carregarMediums();
+
   res.textContent = "✔ Chamada registrada com sucesso!";
+}
+
+// atualiza falas/presenças na tabela mediums
+async function atualizarEstatisticas(registros) {
+  const deltas = {}; // { medium_id: { pres: n, falt: n } }
+
+  registros.forEach((r) => {
+    if (!deltas[r.medium_id]) {
+      deltas[r.medium_id] = { pres: 0, falt: 0 };
+    }
+    if (r.status === "F") {
+      deltas[r.medium_id].falt++;
+    } else {
+      // P, M, PS contam como presença
+      deltas[r.medium_id].pres++;
+    }
+  });
+
+  const ids = Object.keys(deltas);
+  for (const id of ids) {
+    const delta = deltas[id];
+    const m = mediumsCache.find((mm) => mm.id === id);
+
+    const presAtual = m?.presencas || 0;
+    const faltAtual = m?.faltas || 0;
+
+    const novaPres = presAtual + delta.pres;
+    const novaFalt = faltAtual + delta.falt;
+
+    const { error } = await sb
+      .from("mediums")
+      .update({ presencas: novaPres, faltas: novaFalt })
+      .eq("id", id);
+
+    if (error) {
+      console.error("Erro atualizar estatísticas do médium", id, error);
+    } else if (m) {
+      m.presencas = novaPres;
+      m.faltas = novaFalt;
+    }
+  }
 }
 
 // pega, por grupo, o último em ORDEM da lista geral que teve M ou PS
@@ -289,7 +374,9 @@ async function atualizarRotacao(registros) {
   };
 
   registros.forEach((r) => {
+    // Só conta para rotação quem esteve na mesa ou psicografou
     if (r.status !== "M" && r.status !== "PS") return;
+
     const m = mediumsCache.find((mm) => mm.id === r.medium_id);
     if (!m) return;
     const g = m.group_type;
@@ -429,7 +516,7 @@ function listarParticipantesAdmin() {
   cont.innerHTML = html;
 }
 
-// deixar as funções de ação acessíveis para o onclick do HTML
+// deixar funções visíveis pro onclick do HTML
 window.editarParticipante = function (id) {
   const m = mediumsCache.find((x) => x.id === id);
   if (!m) return;
