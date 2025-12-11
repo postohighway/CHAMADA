@@ -75,7 +75,6 @@ function mostrarAba(qual) {
     abaAdmin.style.display = "none";
     tabChamada.classList.add("active");
     tabAdmin.classList.remove("active");
-    // recarrega rotação/vitrine se precisar
     renderGruposChamada();
   } else {
     abaChamada.style.display = "none";
@@ -187,7 +186,7 @@ function getNextMediumId(lista, lastId) {
   return lista[idx + 1].id;
 }
 
-// agora com cartões + destaque do próximo
+// cartões por grupo + destaque do próximo
 function renderGrupo(divId, lista, groupType) {
   const div = document.getElementById(divId);
   div.innerHTML = "";
@@ -275,15 +274,13 @@ async function salvarChamada() {
     return;
   }
 
-  // atualiza rotação baseado em quem foi M ou PS
   await atualizarRotacao(registros);
 
   res.textContent = "✔ Chamada registrada com sucesso!";
 }
 
-// pega, por grupo, o último em ORDEM ALFABÉTICA que teve M ou PS
+// pega, por grupo, o último em ORDEM da lista geral que teve M ou PS
 async function atualizarRotacao(registros) {
-  // separa por grupo
   const porGrupo = {
     dirigente: [],
     incorporacao: [],
@@ -292,7 +289,7 @@ async function atualizarRotacao(registros) {
   };
 
   registros.forEach((r) => {
-    if (r.status !== "M" && r.status !== "PS") return; // só mesa ou psicografia contam
+    if (r.status !== "M" && r.status !== "PS") return;
     const m = mediumsCache.find((mm) => mm.id === r.medium_id);
     if (!m) return;
     const g = m.group_type;
@@ -300,7 +297,6 @@ async function atualizarRotacao(registros) {
     porGrupo[g].push(m);
   });
 
-  // para cada grupo, pega o último na ordem da lista geral
   for (const g of Object.keys(porGrupo)) {
     const usados = porGrupo[g];
     if (!usados || usados.length === 0) continue;
@@ -325,11 +321,10 @@ async function atualizarRotacao(registros) {
     if (error) {
       console.error("Erro ao atualizar rotação do grupo", g, error);
     } else {
-      rotaMap[g] = lastId; // atualiza cache local também
+      rotaMap[g] = lastId;
     }
   }
 
-  // depois de atualizar, recalcula o “próximo da vez” na tela
   renderGruposChamada();
 }
 
@@ -434,7 +429,8 @@ function listarParticipantesAdmin() {
   cont.innerHTML = html;
 }
 
-function editarParticipante(id) {
+// deixar as funções de ação acessíveis para o onclick do HTML
+window.editarParticipante = function (id) {
   const m = mediumsCache.find((x) => x.id === id);
   if (!m) return;
 
@@ -447,9 +443,9 @@ function editarParticipante(id) {
 
   document.getElementById("adminMensagem").textContent =
     "Editando participante...";
-}
+};
 
-async function excluirParticipante(id) {
+window.excluirParticipante = async function (id) {
   if (!confirm("Confirmar exclusão deste participante?")) return;
 
   const { error } = await sb.from("mediums").delete().eq("id", id);
@@ -465,4 +461,4 @@ async function excluirParticipante(id) {
     "✔ Participante excluído.";
   await carregarMediums();
   listarParticipantesAdmin();
-}
+};
