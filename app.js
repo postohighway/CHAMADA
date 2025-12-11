@@ -9,8 +9,9 @@ const SUPABASE_ANON_KEY =
 const { createClient } = window.supabase;
 const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// lista com TODOS os médiuns
+// cache de médiuns e rotação
 let mediumsCache = [];
+let rotaMap = {}; // { group_type: last_medium_id }
 
 // =====================
 // LOGIN / LOGOUT
@@ -74,6 +75,8 @@ function mostrarAba(qual) {
     abaAdmin.style.display = "none";
     tabChamada.classList.add("active");
     tabAdmin.classList.remove("active");
+    // recarrega rotação/vitrine se precisar
+    renderGruposChamada();
   } else {
     abaChamada.style.display = "none";
     abaAdmin.style.display = "block";
@@ -127,7 +130,7 @@ async function verificarData() {
 }
 
 // =====================
-// CARREGAR MÉDIUNS
+// CARREGAR MÉDIUNS + ROTAÇÃO
 // =====================
 
 async function carregarMediums() {
@@ -143,7 +146,20 @@ async function carregarMediums() {
   }
 
   mediumsCache = data || [];
+  await carregarRotacao();
   renderGruposChamada();
+}
+
+async function carregarRotacao() {
+  rotaMap = {};
+  const { data, error } = await sb.from("rotacao").select("*");
+  if (error) {
+    console.error("Erro carregar rotação:", error);
+    return;
+  }
+  (data || []).forEach((r) => {
+    rotaMap[r.group_type] = r.last_medium_id;
+  });
 }
 
 function renderGruposChamada() {
@@ -156,14 +172,23 @@ function renderGruposChamada() {
   );
   const carencia = ativos.filter((x) => x.group_type === "carencia");
 
-  renderGrupo("listaDirigentes", dirigentes);
-  renderGrupo("listaIncorporacao", incorporacao);
-  renderGrupo("listaDesenvolvimento", desenvolvimento);
-  renderGrupo("listaCarencia", carencia);
+  renderGrupo("listaDirigentes", dirigentes, "dirigente");
+  renderGrupo("listaIncorporacao", incorporacao, "incorporacao");
+  renderGrupo("listaDesenvolvimento", desenvolvimento, "desenvolvimento");
+  renderGrupo("listaCarencia", carencia, "carencia");
 }
 
-// 👉 AQUI ENTRA O LAYOUT EM CARTÕES
-function renderGrupo(divId, lista) {
+// devolve o PRÓXIMO da fila baseado no último
+function getNextMediumId(lista, lastId) {
+  if (!lista || lista.length === 0) return null;
+  if (!lastId) return lista[0].id;
+  const idx = lista.findIndex((m) => m.id === lastId);
+  if (idx === -1 || idx === lista.length - 1) return lista[0].id;
+  return lista[idx + 1].id;
+}
+
+// agora com cartões + destaque do próximo
+function renderGrupo(divId, lista, groupType) {
   const div = document.getElementById(divId);
   div.innerHTML = "";
 
@@ -172,9 +197,14 @@ function renderGrupo(divId, lista) {
     return;
   }
 
+  const nextId = getNextMediumId(lista, rotaMap[groupType] || null);
+
   lista.forEach((m) => {
     const card = document.createElement("div");
     card.className = "medium-card";
+    if (m.id === nextId) {
+      card.classList.add("medium-next");
+    }
 
     let radios = `
       <label><input type="radio" name="${m.id}" value="P"> P</label>
@@ -186,8 +216,14 @@ function renderGrupo(divId, lista) {
       radios += `<label><input type="radio" name="${m.id}" value="PS"> PS</label>`;
     }
 
+    const tagNext =
+      m.id === nextId ? `<span class="tag-next">PRÓXIMO DA VEZ</span>` : "";
+
     card.innerHTML = `
-      <div class="medium-name">${m.name}</div>
+      <div class="medium-name">
+        ${m.name}
+        ${tagNext}
+      </div>
       <div class="medium-options">
         ${radios}
       </div>
@@ -198,7 +234,7 @@ function renderGrupo(divId, lista) {
 }
 
 // =====================
-// SALVAR CHAMADA
+// SALVAR CHAMADA + ATUALIZAR ROTAÇÃO
 // =====================
 
 async function salvarChamada() {
@@ -239,7 +275,62 @@ async function salvarChamada() {
     return;
   }
 
+  // atualiza rotação baseado em quem foi M ou PS
+  await atualizarRotacao(registros);
+
   res.textContent = "✔ Chamada registrada com sucesso!";
+}
+
+// pega, por grupo, o último em ORDEM ALFABÉTICA que teve M ou PS
+async function atualizarRotacao(registros) {
+  // separa por grupo
+  const porGrupo = {
+    dirigente: [],
+    incorporacao: [],
+    desenvolvimento: [],
+    carencia: [],
+  };
+
+  registros.forEach((r) => {
+    if (r.status !== "M" && r.status !== "PS") return; // só mesa ou psicografia contam
+    const m = mediumsCache.find((mm) => mm.id === r.medium_id);
+    if (!m) return;
+    const g = m.group_type;
+    if (!porGrupo[g]) return;
+    porGrupo[g].push(m);
+  });
+
+  // para cada grupo, pega o último na ordem da lista geral
+  for (const g of Object.keys(porGrupo)) {
+    const usados = porGrupo[g];
+    if (!usados || usados.length === 0) continue;
+
+    let lastId = null;
+    let lastIndex = -1;
+
+    usados.forEach((m) => {
+      const idx = mediumsCache.findIndex((mm) => mm.id === m.id);
+      if (idx > lastIndex) {
+        lastIndex = idx;
+        lastId = m.id;
+      }
+    });
+
+    if (!lastId) continue;
+
+    const { error } = await sb
+      .from("rotacao")
+      .upsert({ group_type: g, last_medium_id: lastId });
+
+    if (error) {
+      console.error("Erro ao atualizar rotação do grupo", g, error);
+    } else {
+      rotaMap[g] = lastId; // atualiza cache local também
+    }
+  }
+
+  // depois de atualizar, recalcula o “próximo da vez” na tela
+  renderGruposChamada();
 }
 
 // =====================
