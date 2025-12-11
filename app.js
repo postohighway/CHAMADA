@@ -197,18 +197,35 @@ function renderGrupo(divId, lista, groupType) {
     return;
   }
 
-  // em carência NÃO há mesa nem rotação
+  // CARÊNCIA: não tem rotação nem mesa
   const useRotation = groupType !== "carencia";
-  const nextId = useRotation
-    ? getNextMediumId(lista, rotaMap[groupType] || null)
-    : null;
+
+  // ===== novas regras de próximo da vez =====
+  let mesaId = null; // quem dirige a mesa (amarelo)
+  let psDirigenteId = null; // quem psicografa (vermelho) – só dirigentes
+
+  if (useRotation) {
+    mesaId = getNextMediumId(lista, rotaMap[groupType] || null);
+
+    if (groupType === "dirigente") {
+      // dirigente da psicografia = próximo depois da mesa
+      psDirigenteId = getNextMediumId(lista, mesaId);
+    }
+  }
+  // =========================================
 
   lista.forEach((m) => {
     const card = document.createElement("div");
     card.className = "medium-card";
 
-    if (useRotation && m.id === nextId) {
+    // borda amarela = próxima MESA
+    if (useRotation && m.id === mesaId) {
       card.classList.add("medium-next");
+    }
+
+    // borda vermelha = próximo PS (dirigente)
+    if (groupType === "dirigente" && psDirigenteId && m.id === psDirigenteId) {
+      card.classList.add("medium-ps");
     }
 
     // cálculo % de falta
@@ -238,9 +255,11 @@ function renderGrupo(divId, lista, groupType) {
         <label><input type="radio" name="${m.id}" value="F"> F</label>
       `;
 
-      // Dirigentes: também PS, em vermelho para o "próximo da vez"
+      // Dirigentes: também PS
       if (groupType === "dirigente") {
-        const psClass = useRotation && m.id === nextId ? "ps-next" : "";
+        // PS do dirigente "da psicografia" em vermelho
+        const psClass =
+          psDirigenteId && m.id === psDirigenteId ? "ps-next" : "";
         radios += `
           <label class="${psClass}">
             <input type="radio" name="${m.id}" value="PS"> PS
@@ -249,8 +268,9 @@ function renderGrupo(divId, lista, groupType) {
       }
     }
 
+    // selo "PRÓXIMO DA VEZ" só para quem dirige a mesa
     const tagNext =
-      useRotation && m.id === nextId
+      useRotation && m.id === mesaId
         ? `<span class="tag-next">PRÓXIMO DA VEZ</span>`
         : "";
 
@@ -311,19 +331,22 @@ async function salvarChamada() {
     return;
   }
 
-  // atualiza contadores de faltas/presenças
+  // 1) atualiza contadores de faltas/presenças
   await atualizarEstatisticas(registros);
 
-  // atualiza rotação (quem foi M ou PS)
+  // 2) atualiza rotação (quem foi M ou PS)
   await atualizarRotacao(registros);
 
-  // recarrega tudo (inclusive % de faltas recalculado)
-  await carregarMediums();
+  // 3) recarrega rotação do banco para garantir
+  await carregarRotacao();
+
+  // 4) redesenha com tudo atualizado
+  renderGruposChamada();
 
   res.textContent = "✔ Chamada registrada com sucesso!";
 }
 
-// atualiza falas/presenças na tabela mediums
+// atualiza faltas/presenças na tabela mediums
 async function atualizarEstatisticas(registros) {
   const deltas = {}; // { medium_id: { pres: n, falt: n } }
 
@@ -411,8 +434,6 @@ async function atualizarRotacao(registros) {
       rotaMap[g] = lastId;
     }
   }
-
-  renderGruposChamada();
 }
 
 // =====================
