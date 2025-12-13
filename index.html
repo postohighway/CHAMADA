@@ -1,62 +1,119 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="pt-br">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Chamada Núcleo</title>
-
-  <!-- CSS -->
-  <link rel="stylesheet" href="./style.css" />
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script defer src="app.js"></script>
 </head>
+
 <body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <div class="title">Chamada de Médiuns</div>
+        <div class="subtitle">Controle de presença — terça-feira</div>
+      </div>
 
-  <!-- LOGIN -->
-  <div id="loginCard" class="login-card">
-    <h1>Chamada Núcleo</h1>
-
-    <div id="loginError" class="error"></div>
-
-    <input type="email" id="email" placeholder="Email" />
-    <input type="password" id="senha" placeholder="Senha" />
-
-    <button onclick="login()">Entrar</button>
-  </div>
-
-  <!-- APP -->
-  <div id="app" style="display:none">
-    <header>
-      <h2>Chamada de Médiuns</h2>
-      <button onclick="logout()">Sair</button>
+      <div class="top-actions">
+        <button class="pill active" id="tabChamada" onclick="mostrarAba('chamada')">Chamada</button>
+        <button class="pill" id="tabAdmin" onclick="mostrarAba('admin')">Participantes</button>
+      </div>
     </header>
 
-    <main>
-      <label>Data da chamada:</label>
-      <input type="date" id="dataChamada" />
-      <button onclick="verificarData()">Verificar data</button>
-      <div id="avisoData"></div>
+    <main class="card">
+      <!-- ABA CHAMADA -->
+      <section id="abaChamada">
+        <div class="row">
+          <div class="field">
+            <label for="dataChamada">Data da Chamada</label>
+            <input id="dataChamada" type="date" />
+          </div>
 
-      <h3>Dirigentes</h3>
-      <div id="listaDirigentes"></div>
+          <button class="btn" id="btnVerificar" onclick="verificarData()">Verificar data</button>
+        </div>
 
-      <h3>Médiuns de Incorporação</h3>
-      <div id="listaIncorporacao"></div>
+        <div id="avisoData" class="notice"></div>
 
-      <h3>Médiuns em Desenvolvimento</h3>
-      <div id="listaDesenvolvimento"></div>
+        <div class="row row-actions">
+          <button class="btn primary" id="btnSalvar" onclick="salvarChamada()">Salvar chamada</button>
+          <div id="resultadoSalvar" class="result"></div>
+        </div>
 
-      <h3>Médiuns em Carência</h3>
-      <div id="listaCarencia"></div>
+        <div class="legend">
+          <span class="dot next"></span> Próximo da vez (Mesa)
+          <span class="dot ps"></span> Próximo da vez (Psicografia)
+          <span class="dot late"></span> Falta alta (≥ 30%)
+        </div>
 
-      <button onclick="salvarChamada()">Salvar chamada</button>
-      <div id="resultadoSalvar"></div>
+        <h2>Dirigentes</h2>
+        <div id="listaDirigentes" class="list"></div>
+
+        <h2>Médiuns de Incorporação</h2>
+        <div id="listaIncorporacao" class="list"></div>
+
+        <h2>Médiuns em Desenvolvimento</h2>
+        <div id="listaDesenvolvimento" class="list"></div>
+
+        <h2>Médiuns em Carência</h2>
+        <div class="hint">Carência não vai à mesa (somente P/F).</div>
+        <div id="listaCarencia" class="list"></div>
+      </section>
+
+      <!-- ABA ADMIN -->
+      <section id="abaAdmin" style="display:none;">
+        <div class="admin-head">
+          <div>
+            <h2 style="margin:0;">Participantes</h2>
+            <div class="hint">Aqui você inclui/edita/exclui e ativa/desativa participantes (p/ iPhone funciona normal).</div>
+          </div>
+        </div>
+
+        <div class="row">
+          <div class="field grow">
+            <label for="busca">Buscar</label>
+            <input id="busca" placeholder="Digite parte do nome..." oninput="renderListaAdmin()" />
+          </div>
+        </div>
+
+        <div class="admin-grid">
+          <div class="admin-card">
+            <h3>Novo participante</h3>
+
+            <div class="field">
+              <label for="novoNome">Nome</label>
+              <input id="novoNome" placeholder="Ex.: Marcelo Loureiro" />
+            </div>
+
+            <div class="field">
+              <label for="novoGrupo">Grupo</label>
+              <select id="novoGrupo">
+                <option value="dirigente">Dirigente</option>
+                <option value="incorporacao">Incorporação</option>
+                <option value="desenvolvimento">Desenvolvimento</option>
+                <option value="carencia">Carência</option>
+              </select>
+            </div>
+
+            <div class="row">
+              <button class="btn primary" onclick="criarParticipante()">Adicionar</button>
+              <div id="adminMsg" class="result"></div>
+            </div>
+          </div>
+
+          <div class="admin-card">
+            <h3>Lista</h3>
+            <div id="listaAdmin" class="admin-list"></div>
+          </div>
+        </div>
+      </section>
     </main>
+
+    <footer class="foot">
+      <span id="statusRodape">Conectando…</span>
+    </footer>
   </div>
-
-  <!-- SUPABASE -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-
-  <!-- SEU JS -->
-  <script src="./app.js"></script>
-
 </body>
 </html>
