@@ -1,150 +1,340 @@
-// =================== SUPABASE (SEM LOGIN) ===================
+/* =========================
+   CONFIGURAÇÃO SUPABASE
+========================= */
 const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co";
-const SUPABASE_ANON_KEY = "COLE_AQUI_SUA_ANON_KEY_DO_SUPABASE";
+const SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5vdXp6eXJldnlrZG1ucWlmamp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUzOTYzMDIsImV4cCI6MjA4MDk3MjMwMn0.s2OzeSXe7CrKDNl6fXkTcMj_Vgitod0l0h0BiJA79nc";
 
-const { createClient } = window.supabase;
-const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false },
-});
+let sb = null;
 
-// =================== ESTADO ===================
-let mediunsCache = [];
+/* =========================
+   CACHE / ESTADO
+========================= */
+let mediumsCache = [];
 let rotaMap = {
-  dirigente: { last_mesa: null, last_ps: null },
-  incorporacao: { last_mesa: null },
-  desenvolvimento: { last_mesa: null },
-  carencia: { last_mesa: null },
+  dirigente: null,        // last_medium_id (mesa)
+  incorporacao: null,     // last_medium_id (mesa)
+  desenvolvimento: null,  // last_medium_id (mesa)
+  carencia: null,         // sempre null (sem rotação)
+  psicografia: null,      // last_medium_id (psicografia - dirigente)
 };
 
-function setStatus(txt) {
-  const el = document.getElementById("statusRodape");
+const GROUPS = ["dirigente", "incorporacao", "desenvolvimento", "carencia"];
+
+/* =========================
+   HELPERS DOM
+========================= */
+function $(id) {
+  return document.getElementById(id);
+}
+function setText(id, txt) {
+  const el = $(id);
   if (el) el.textContent = txt;
 }
-
-function localISODate() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+function setHTML(id, html) {
+  const el = $(id);
+  if (el) el.innerHTML = html;
+}
+function show(id) {
+  const el = $(id);
+  if (el) el.style.display = "block";
+}
+function hide(id) {
+  const el = $(id);
+  if (el) el.style.display = "none";
+}
+function disable(id, disabled) {
+  const el = $(id);
+  if (el) el.disabled = !!disabled;
 }
 
-document.addEventListener("DOMContentLoaded", async () => {
-  document.getElementById("dataChamada").value = localISODate();
-  setStatus("Carregando dados…");
-  await init();
-});
+/* =========================
+   INIT
+========================= */
+function initSupabaseOrDie() {
+  if (!window.supabase || !window.supabase.createClient) {
+    throw new Error(
+      "Supabase JS não carregou. Confirme o <script src='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2'></script> no index.html"
+    );
+  }
+  sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+}
 
-async function init() {
+async function initApp() {
   try {
-    await carregarMediuns();
-    await carregarRotacao();
-    renderGruposChamada();
-    renderListaAdmin();
-    setStatus("Online ✅");
+    initSupabaseOrDie();
   } catch (e) {
     console.error(e);
-    setStatus("Erro ao carregar ❌");
-    document.getElementById("avisoData").textContent =
-      "Erro ao conectar no Supabase. Verifique URL/KEY e RLS das tabelas.";
-    document.getElementById("avisoData").className = "notice bad";
+    setText("erroGlobal", "Erro: supabase-js não carregou no navegador.");
+    return;
+  }
+
+  // Setar data padrão (hoje) se existir input
+  const dataInput = $("dataChamada");
+  if (dataInput && !dataInput.value) {
+    const hoje = new Date();
+    const yyyy = hoje.getFullYear();
+    const mm = String(hoje.getMonth() + 1).padStart(2, "0");
+    const dd = String(hoje.getDate()).padStart(2, "0");
+    dataInput.value = `${yyyy}-${mm}-${dd}`;
+  }
+
+  // Bind botões
+  const btnVerificar = $("btnVerificarData");
+  if (btnVerificar) btnVerificar.addEventListener("click", verificarData);
+
+  const btnSalvar = $("btnSalvar");
+  if (btnSalvar) btnSalvar.addEventListener("click", salvarChamada);
+
+  const btnAbaChamada = $("tabChamada");
+  if (btnAbaChamada) btnAbaChamada.addEventListener("click", () => mostrarAba("chamada"));
+
+  const btnAbaAdmin = $("tabAdmin");
+  if (btnAbaAdmin) btnAbaAdmin.addEventListener("click", () => mostrarAba("admin"));
+
+  const btnSair = $("btnSair");
+  if (btnSair) btnSair.addEventListener("click", logout);
+
+  const btnLogin = $("btnLogin");
+  if (btnLogin) btnLogin.addEventListener("click", login);
+
+  const btnSalvarParticipante = $("btnSalvarParticipante");
+  if (btnSalvarParticipante) btnSalvarParticipante.addEventListener("click", salvarParticipanteAdmin);
+
+  const btnNovoParticipante = $("btnNovoParticipante");
+  if (btnNovoParticipante) btnNovoParticipante.addEventListener("click", prepararNovoParticipanteAdmin);
+
+  // Se existe loginCard, começa em login. Se não, já abre app direto.
+  if ($("loginCard")) {
+    show("loginCard");
+    hide("app");
+    // tenta manter sessão:
+    try {
+      const { data } = await sb.auth.getSession();
+      if (data && data.session) {
+        hide("loginCard");
+        show("app");
+        await bootAfterLogin();
+      }
+    } catch (e) {
+      // se auth falhar, só deixa login
+      console.warn("Auth session check falhou:", e);
+    }
+  } else {
+    show("app");
+    await bootAfterLogin();
   }
 }
 
-// =================== NAVEGAÇÃO ===================
-window.mostrarAba = function (qual) {
-  const abaChamada = document.getElementById("abaChamada");
-  const abaAdmin = document.getElementById("abaAdmin");
-  const tabChamada = document.getElementById("tabChamada");
-  const tabAdmin = document.getElementById("tabAdmin");
+async function bootAfterLogin() {
+  setText("erroGlobal", "");
+  await carregarTudo();
+  mostrarAba("chamada");
+}
 
-  if (qual === "chamada") {
-    abaChamada.style.display = "block";
-    abaAdmin.style.display = "none";
-    tabChamada.classList.add("active");
-    tabAdmin.classList.remove("active");
-    renderGruposChamada();
+/* =========================
+   LOGIN / LOGOUT
+========================= */
+async function login() {
+  const email = $("email")?.value?.trim() || "";
+  const senha = $("senha")?.value?.trim() || "";
+  setText("loginError", "");
+
+  if (!email || !senha) {
+    setText("loginError", "Preencha email e senha.");
+    return;
+  }
+
+  try {
+    const { error } = await sb.auth.signInWithPassword({ email, password: senha });
+    if (error) {
+      console.error("Erro login:", error);
+      setText("loginError", "Erro no login: " + (error.message || "desconhecido"));
+      return;
+    }
+    hide("loginCard");
+    show("app");
+    await bootAfterLogin();
+  } catch (e) {
+    console.error("Exceção login:", e);
+    setText("loginError", "Erro inesperado ao tentar entrar.");
+  }
+}
+
+async function logout() {
+  try {
+    await sb.auth.signOut();
+  } catch (e) {
+    console.warn("signOut falhou:", e);
+  }
+  if ($("loginCard")) {
+    show("loginCard");
+    hide("app");
+  }
+}
+
+/* =========================
+   ABAS
+========================= */
+function mostrarAba(qual) {
+  const abaChamada = $("abaChamada");
+  const abaAdmin = $("abaAdmin");
+
+  if (qual === "admin") {
+    if (abaChamada) abaChamada.style.display = "none";
+    if (abaAdmin) abaAdmin.style.display = "block";
+    $("tabChamada")?.classList.remove("active");
+    $("tabAdmin")?.classList.add("active");
+    listarParticipantesAdmin();
   } else {
-    abaChamada.style.display = "none";
-    abaAdmin.style.display = "block";
-    tabChamada.classList.remove("active");
-    tabAdmin.classList.add("active");
-    renderListaAdmin();
+    if (abaAdmin) abaAdmin.style.display = "none";
+    if (abaChamada) abaChamada.style.display = "block";
+    $("tabAdmin")?.classList.remove("active");
+    $("tabChamada")?.classList.add("active");
   }
-};
+}
 
-// =================== VERIFICAR DATA ===================
-window.verificarData = async function verificarData() {
-  const data = document.getElementById("dataChamada").value;
-  const aviso = document.getElementById("avisoData");
-  aviso.className = "notice";
-  aviso.textContent = "";
+/* =========================
+   DATA / FERIADOS
+========================= */
+function getSelectedDateISO() {
+  // suporte a input date (yyyy-mm-dd) ou texto (dd/mm/yyyy)
+  const raw = $("dataChamada")?.value?.trim() || "";
+  if (!raw) return null;
 
-  if (!data) {
-    aviso.textContent = "Selecione uma data.";
-    aviso.classList.add("bad");
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+
+  // dd/mm/yyyy
+  const m = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
+
+  return null;
+}
+
+function getDayOfWeekBR(dateISO) {
+  // força TZ BR pra não virar o dia
+  const d = new Date(dateISO + "T12:00:00-03:00");
+  return d.getDay(); // 0 dom ... 2 ter ...
+}
+
+async function verificarData() {
+  setText("avisoData", "");
+  const dateISO = getSelectedDateISO();
+  if (!dateISO) {
+    setText("avisoData", "Selecione uma data válida.");
     return false;
   }
 
-  // 0=domingo ... 2=terça
-  const diaSemana = new Date(data + "T03:00:00").getDay();
-  if (diaSemana !== 2) {
-    aviso.textContent = "❌ Chamada só pode ser feita em TERÇA-FEIRA.";
-    aviso.classList.add("bad");
+  // Terça-feira
+  const dow = getDayOfWeekBR(dateISO);
+  if (dow !== 2) {
+    setText("avisoData", "❌ Chamada só pode ser feita em TERÇA-FEIRA.");
     return false;
   }
 
-  // feriados
-  const { data: fer, error } = await sb.from("feriados").select("*").eq("data", data);
-  if (error) console.warn("Erro feriados:", error);
-
-  if (fer && fer.length > 0) {
-    aviso.textContent = "❌ Hoje é feriado! Chamada não permitida.";
-    aviso.classList.add("bad");
+  // Verificar feriado
+  try {
+    const { data, error } = await sb.from("feriados").select("data").eq("data", dateISO).limit(1);
+    if (error) {
+      console.error("Erro ao consultar feriados:", error);
+      setText("avisoData", "⚠️ Erro ao consultar feriados (verifique RLS/políticas).");
+      return false;
+    }
+    if (data && data.length > 0) {
+      setText("avisoData", "❌ Hoje é feriado! Chamada não permitida.");
+      return false;
+    }
+  } catch (e) {
+    console.error("Exceção feriados:", e);
+    setText("avisoData", "⚠️ Erro ao consultar feriados.");
     return false;
   }
 
-  aviso.textContent = "✅ Data válida, pode registrar presença.";
-  aviso.classList.add("ok");
+  setText("avisoData", "✅ Data válida, pode registrar presença.");
   return true;
-};
+}
 
-// =================== CARREGAR DADOS ===================
-async function carregarMediuns() {
-  const { data, error } = await sb.from("mediuns").select("*").order("name", { ascending: true });
-  if (error) throw error;
-  mediunsCache = (data || []).slice();
+/* =========================
+   CARREGAR DADOS
+========================= */
+async function carregarTudo() {
+  setText("erroGlobal", "");
+  setText("resultadoSalvar", "");
+  await carregarRotacao();
+  await carregarMediums();
+  renderGruposChamada();
+}
+
+async function carregarMediums() {
+  try {
+    const { data, error } = await sb
+      .from("mediums")
+      .select("*")
+      .order("name", { ascending: true });
+
+    if (error) {
+      console.error("Erro carregar mediums:", error);
+      setText("erroGlobal", "Erro ao conectar no Supabase. Verifique URL/KEY e RLS das tabelas.");
+      mediumsCache = [];
+      return;
+    }
+
+    mediumsCache = (data || []).filter((m) => m.active !== false);
+  } catch (e) {
+    console.error("Exceção carregar mediums:", e);
+    setText("erroGlobal", "Erro ao conectar no Supabase. Verifique URL/KEY e RLS das tabelas.");
+    mediumsCache = [];
+  }
 }
 
 async function carregarRotacao() {
-  const { data, error } = await sb.from("rotacao").select("*");
-  if (error) throw error;
-
-  // default
-  rotaMap.dirigente.last_mesa = null;
-  rotaMap.dirigente.last_ps = null;
-  rotaMap.incorporacao.last_mesa = null;
-  rotaMap.desenvolvimento.last_mesa = null;
-
-  (data || []).forEach((r) => {
-    if (r.group_type === "dirigente") {
-      rotaMap.dirigente.last_mesa = r.last_medium_id || null;
-      rotaMap.dirigente.last_ps = r.last_ps_medium_id || null;
+  // rotacao esperado: group_type (PK), last_medium_id (mesa)
+  // adicional: usar row group_type='psicografia' para rotação de psicografia (dirigentes)
+  try {
+    const { data, error } = await sb.from("rotacao").select("*");
+    if (error) {
+      console.error("Erro carregar rotacao:", error);
+      // Não derruba o app — só não destaca
+      return;
     }
-    if (r.group_type === "incorporacao") rotaMap.incorporacao.last_mesa = r.last_medium_id || null;
-    if (r.group_type === "desenvolvimento") rotaMap.desenvolvimento.last_mesa = r.last_medium_id || null;
-    if (r.group_type === "carencia") rotaMap.carencia.last_mesa = r.last_medium_id || null;
-  });
+
+    // reset
+    rotaMap.dirigente = null;
+    rotaMap.incorporacao = null;
+    rotaMap.desenvolvimento = null;
+    rotaMap.carencia = null;
+    rotaMap.psicografia = null;
+
+    (data || []).forEach((r) => {
+      if (r.group_type && rotaMap.hasOwnProperty(r.group_type)) {
+        rotaMap[r.group_type] = r.last_medium_id || null;
+      }
+    });
+  } catch (e) {
+    console.error("Exceção rotacao:", e);
+  }
 }
 
-// =================== RENDER (CHAMADA) ===================
-function renderGruposChamada() {
-  const ativos = mediunsCache.filter((m) => m.active);
+/* =========================
+   ROTACAO HELPERS
+========================= */
+function getNextIdByLastId(list, lastId) {
+  if (!list || list.length === 0) return null;
+  if (!lastId) return list[0].id;
 
-  const dirigentes = ativos.filter((m) => m.group_type === "dirigente");
-  const incorporacao = ativos.filter((m) => m.group_type === "incorporacao");
-  const desenvolvimento = ativos.filter((m) => m.group_type === "desenvolvimento");
-  const carencia = ativos.filter((m) => m.group_type === "carencia");
+  const idx = list.findIndex((m) => m.id === lastId);
+  if (idx === -1 || idx === list.length - 1) return list[0].id;
+  return list[idx + 1].id;
+}
+
+/* =========================
+   RENDER
+========================= */
+function renderGruposChamada() {
+  const dirigentes = mediumsCache.filter((m) => m.group_type === "dirigente");
+  const incorporacao = mediumsCache.filter((m) => m.group_type === "incorporacao");
+  const desenvolvimento = mediumsCache.filter((m) => m.group_type === "desenvolvimento");
+  const carencia = mediumsCache.filter((m) => m.group_type === "carencia");
 
   renderGrupo("listaDirigentes", dirigentes, "dirigente");
   renderGrupo("listaIncorporacao", incorporacao, "incorporacao");
@@ -152,352 +342,479 @@ function renderGruposChamada() {
   renderGrupo("listaCarencia", carencia, "carencia");
 }
 
-function getNextId(lista, lastId) {
-  if (!lista || lista.length === 0) return null;
-  if (!lastId) return lista[0].id;
-  const idx = lista.findIndex((m) => m.id === lastId);
-  if (idx === -1 || idx === lista.length - 1) return lista[0].id;
-  return lista[idx + 1].id;
-}
+function calcPercentFalta(m) {
+  const faltas = Number(m.faltas || 0);
+  const pres = Number(m.presencas || 0);
+  const mesa = Number(m.mesa || 0);
+  const ps = Number(m.psicografia || 0);
 
-function calcPercFalta(m, groupType) {
-  const faltas = m.faltas || 0;
-  const pres = m.presencas || 0;
-  const mesa = m.mesa || 0;
-  const ps = groupType === "dirigente" ? (m.psicografia || 0) : 0;
-
+  // total considerado = faltas + presencas + mesa (+ psicografia como presença, se você quiser considerar)
   const total = faltas + pres + mesa + ps;
-  if (total <= 0) return { perc: 0, total: 0 };
-
-  const perc = Math.round((faltas * 100) / total);
-  return { perc, total };
+  if (total <= 0) return 0;
+  return Math.round((faltas * 100) / total);
 }
 
-function renderGrupo(divId, lista, groupType) {
-  const div = document.getElementById(divId);
+function buildRadiosHTML(groupType, id) {
+  // nome do grupo de radios: attendance_{id}
+  const name = `att_${id}`;
+
+  if (groupType === "carencia") {
+    // Carência: só P / F
+    return `
+      <label class="radio"><input type="radio" name="${name}" value="P"> <span>P</span></label>
+      <label class="radio"><input type="radio" name="${name}" value="F"> <span>F</span></label>
+    `;
+  }
+
+  // demais: P / M / F
+  let radios = `
+    <label class="radio"><input type="radio" name="${name}" value="P"> <span>P</span></label>
+    <label class="radio"><input type="radio" name="${name}" value="M"> <span>M</span></label>
+    <label class="radio"><input type="radio" name="${name}" value="F"> <span>F</span></label>
+  `;
+
+  // dirigentes: PS
+  if (groupType === "dirigente") {
+    radios += `
+      <label class="radio radio-ps"><input type="radio" name="${name}" value="PS"> <span>PS</span></label>
+    `;
+  }
+
+  return radios;
+}
+
+function renderGrupo(divId, list, groupType) {
+  const div = $(divId);
+  if (!div) return;
+
   div.innerHTML = "";
 
-  if (!lista || lista.length === 0) {
+  if (!list || list.length === 0) {
     div.innerHTML = `<div class="empty">Nenhum médium neste grupo.</div>`;
     return;
   }
 
-  // Próximos
-  let nextMesaId = null;
-  let nextPsId = null;
+  // Próximo da vez (Mesa)
+  const useMesaRotation = groupType !== "carencia";
+  const nextMesaId = useMesaRotation ? getNextIdByLastId(list, rotaMap[groupType] || null) : null;
 
-  if (groupType === "dirigente") {
-    nextMesaId = getNextId(lista, rotaMap.dirigente.last_mesa);
-    nextPsId = getNextId(lista, rotaMap.dirigente.last_ps);
-  } else if (groupType === "incorporacao") {
-    nextMesaId = getNextId(lista, rotaMap.incorporacao.last_mesa);
-  } else if (groupType === "desenvolvimento") {
-    nextMesaId = getNextId(lista, rotaMap.desenvolvimento.last_mesa);
-  } else {
-    // carencia: sem mesa/sem rotação
-    nextMesaId = null;
-  }
+  // Próximo da vez (Psicografia) apenas dirigentes
+  const usePsRotation = groupType === "dirigente";
+  const nextPsId = usePsRotation ? getNextIdByLastId(list, rotaMap.psicografia || null) : null;
 
-  lista.forEach((m) => {
+  list.forEach((m) => {
+    const perc = calcPercentFalta(m);
+    const faltaAlta = perc >= 30;
+
     const card = document.createElement("div");
     card.className = "medium-card";
 
-    if (nextMesaId && m.id === nextMesaId) card.classList.add("next-mesa");
-    if (nextPsId && m.id === nextPsId) card.classList.add("next-ps");
+    // borda amarela (mesa)
+    if (useMesaRotation && m.id === nextMesaId) card.classList.add("next-mesa");
 
-    const { perc } = calcPercFalta(m, groupType);
-    const badgeClass = perc >= 30 ? "badge late" : "badge";
+    // borda vermelha (psicografia - dirigente)
+    if (usePsRotation && m.id === nextPsId) card.classList.add("next-ps");
 
-    // opções por grupo
-    let radios = "";
-    const inputName = `status_${m.id}`;
+    const badgePerc = `
+      <span class="badge-perc ${faltaAlta ? "badge-alta" : ""}">${perc}% faltas</span>
+    `;
 
-    if (groupType === "carencia") {
-      radios = `
-        <label class="opt"><input type="radio" name="${inputName}" value="P"> <span>P</span></label>
-        <label class="opt"><input type="radio" name="${inputName}" value="F"> <span>F</span></label>
-      `;
-    } else if (groupType === "dirigente") {
-      radios = `
-        <label class="opt"><input type="radio" name="${inputName}" value="P"> <span>P</span></label>
-        <label class="opt"><input type="radio" name="${inputName}" value="M"> <span>M</span></label>
-        <label class="opt"><input type="radio" name="${inputName}" value="F"> <span>F</span></label>
-        <label class="opt ps"><input type="radio" name="${inputName}" value="PS"> <span>PS</span></label>
-      `;
-    } else {
-      radios = `
-        <label class="opt"><input type="radio" name="${inputName}" value="P"> <span>P</span></label>
-        <label class="opt"><input type="radio" name="${inputName}" value="M"> <span>M</span></label>
-        <label class="opt"><input type="radio" name="${inputName}" value="F"> <span>F</span></label>
-      `;
-    }
-
-    // tags
-    const tags = [];
-    if (nextMesaId && m.id === nextMesaId) tags.push(`<span class="tag next">PRÓXIMO (MESA)</span>`);
-    if (nextPsId && m.id === nextPsId) tags.push(`<span class="tag ps">PRÓXIMO (PS)</span>`);
+    const tagMesa = useMesaRotation && m.id === nextMesaId ? `<span class="tag tag-mesa">PRÓXIMO (MESA)</span>` : "";
+    const tagPs = usePsRotation && m.id === nextPsId ? `<span class="tag tag-ps">PRÓXIMO (PS)</span>` : "";
 
     card.innerHTML = `
-      <div class="card-head">
+      <div class="card-top">
         <div class="name-line">
-          <span class="${badgeClass}">${perc}% falta</span>
-          <span class="name">${m.name}</span>
+          <span class="name">${escapeHtml(m.name || "")}</span>
+          ${badgePerc}
         </div>
-        <div class="tags">${tags.join("")}</div>
+        <div class="tags">
+          ${tagMesa}
+          ${tagPs}
+        </div>
       </div>
-      <div class="opts">${radios}</div>
+
+      <div class="radios">
+        ${buildRadiosHTML(groupType, m.id)}
+      </div>
     `;
 
     div.appendChild(card);
   });
 }
 
-// =================== SALVAR CHAMADA ===================
-window.salvarChamada = async function salvarChamada() {
-  const data = document.getElementById("dataChamada").value;
-  const res = document.getElementById("resultadoSalvar");
-  res.textContent = "";
-  res.className = "result";
+function escapeHtml(s) {
+  return String(s)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
 
-  const ok = await window.verificarData();
+/* =========================
+   SALVAR CHAMADA
+========================= */
+function getStatusForMediumId(id) {
+  const el = document.querySelector(`input[name="att_${id}"]:checked`);
+  return el ? el.value : null;
+}
+
+async function salvarChamada() {
+  setText("resultadoSalvar", "");
+
+  const ok = await verificarData();
   if (!ok) {
-    res.textContent = "Corrija a data antes de salvar.";
-    res.classList.add("bad");
+    setText("resultadoSalvar", "Corrija a data antes de salvar.");
     return;
   }
 
-  // impede duplicar a mesma data (pra não bagunçar contadores)
-  const { data: jaTem, error: e0 } = await sb.from("chamadas").select("id").eq("data", data).limit(1);
-  if (e0) console.warn(e0);
-
-  if (jaTem && jaTem.length > 0) {
-    res.textContent = "Já existe chamada nessa data. Use outra data para teste.";
-    res.classList.add("bad");
+  const dateISO = getSelectedDateISO();
+  if (!dateISO) {
+    setText("resultadoSalvar", "Data inválida.");
     return;
   }
 
-  const ativos = mediunsCache.filter((m) => m.active);
+  if (!mediumsCache || mediumsCache.length === 0) {
+    setText("resultadoSalvar", "Nenhum médium carregado.");
+    return;
+  }
+
   const registros = [];
+  const statsDelta = new Map(); // medium_id -> {pres, falta, mesa, ps}
 
-  ativos.forEach((m) => {
-    const sel = document.querySelector(`input[name="status_${m.id}"]:checked`);
-    if (!sel) return;
-    registros.push({ medium_id: m.id, data, status: sel.value });
-  });
+  for (const m of mediumsCache) {
+    const status = getStatusForMediumId(m.id);
+    if (!status) continue;
+
+    registros.push({
+      medium_id: m.id,
+      data: dateISO,
+      status: status,
+    });
+
+    if (!statsDelta.has(m.id)) statsDelta.set(m.id, { pres: 0, falta: 0, mesa: 0, ps: 0 });
+
+    const d = statsDelta.get(m.id);
+    if (status === "F") d.falta += 1;
+    else if (status === "M") d.mesa += 1;
+    else if (status === "PS") d.ps += 1;
+    else d.pres += 1; // P
+  }
 
   if (registros.length === 0) {
-    res.textContent = "Nenhuma presença marcada.";
-    res.classList.add("bad");
+    setText("resultadoSalvar", "Nenhuma presença marcada.");
     return;
   }
 
-  // grava chamadas
-  const { error } = await sb.from("chamadas").insert(registros);
-  if (error) {
-    console.error(error);
-    res.textContent = "Erro ao salvar: " + error.message;
-    res.classList.add("bad");
-    return;
-  }
+  disable("btnSalvar", true);
 
-  // atualiza contadores em mediuns (usando cache como base)
-  const deltaById = {};
-  registros.forEach((r) => {
-    if (!deltaById[r.medium_id]) deltaById[r.medium_id] = { P: 0, M: 0, F: 0, PS: 0 };
-    deltaById[r.medium_id][r.status] = (deltaById[r.medium_id][r.status] || 0) + 1;
-  });
-
-  for (const m of mediunsCache) {
-    const d = deltaById[m.id];
-    if (!d) continue;
-
-    const patch = {
-      presencas: (m.presencas || 0) + (d.P || 0),
-      mesa: (m.mesa || 0) + (d.M || 0),
-      faltas: (m.faltas || 0) + (d.F || 0),
-      psicografia: (m.psicografia || 0) + (d.PS || 0),
-    };
-
-    // carencia não tem mesa/ps -> se por algum motivo vier, ignora
-    if (m.group_type === "carencia") {
-      patch.mesa = m.mesa || 0;
-      patch.psicografia = m.psicografia || 0;
-    }
-    if (m.group_type !== "dirigente") {
-      patch.psicografia = m.psicografia || 0;
+  try {
+    // 1) Inserir chamadas
+    const { error: insertError } = await sb.from("chamadas").insert(registros);
+    if (insertError) {
+      console.error("Erro salvar chamadas:", insertError);
+      setText("resultadoSalvar", "❌ Erro ao salvar (verifique RLS/policies da tabela chamadas).");
+      disable("btnSalvar", false);
+      return;
     }
 
-    const { error: e1 } = await sb.from("mediuns").update(patch).eq("id", m.id);
-    if (e1) console.warn("Erro update mediuns:", e1);
-  }
+    // 2) Atualizar contadores em mediums (incrementando)
+    for (const [mediumId, d] of statsDelta.entries()) {
+      // buscar atual para somar
+      const { data: cur, error: selErr } = await sb
+        .from("mediums")
+        .select("id, faltas, presencas, mesa, psicografia")
+        .eq("id", mediumId)
+        .single();
 
-  // atualiza rotações (último que foi M/PS em cada grupo)
-  await atualizarRotacaoPorRegistros(registros);
+      if (selErr) {
+        console.warn("Falha ao buscar medium para update:", selErr);
+        continue;
+      }
 
-  // recarrega tudo
-  await carregarMediuns();
-  await carregarRotacao();
-  renderGruposChamada();
+      const payload = {
+        faltas: Number(cur.faltas || 0) + d.falta,
+        presencas: Number(cur.presencas || 0) + d.pres,
+        mesa: Number(cur.mesa || 0) + d.mesa,
+        psicografia: Number(cur.psicografia || 0) + d.ps,
+        updated_at: new Date().toISOString(),
+      };
 
-  res.textContent = "✅ Chamada registrada com sucesso!";
-  res.classList.add("ok");
-};
+      const { error: upErr } = await sb.from("mediums").update(payload).eq("id", mediumId);
+      if (upErr) console.warn("Falha update medium:", upErr);
+    }
 
-async function atualizarRotacaoPorRegistros(registros) {
-  const byId = Object.fromEntries(mediunsCache.map((m) => [m.id, m]));
+    // 3) Atualizar rotação (mesa e psicografia)
+    await atualizarRotacao(registros);
 
-  const grupos = {
-    dirigente_M: [],
-    dirigente_PS: [],
-    incorporacao: [],
-    desenvolvimento: [],
-  };
+    // 4) Recarregar e re-render
+    await carregarTudo();
 
-  registros.forEach((r) => {
-    const m = byId[r.medium_id];
-    if (!m) return;
-
-    if (m.group_type === "dirigente" && r.status === "M") grupos.dirigente_M.push(m);
-    if (m.group_type === "dirigente" && r.status === "PS") grupos.dirigente_PS.push(m);
-    if (m.group_type === "incorporacao" && r.status === "M") grupos.incorporacao.push(m);
-    if (m.group_type === "desenvolvimento" && r.status === "M") grupos.desenvolvimento.push(m);
-  });
-
-  // como a lista já é ordenada por nome, "o último" é o maior índice
-  const lastId = (arr) => (arr.length ? arr[arr.length - 1].id : null);
-
-  const updDir = {
-    last_medium_id: grupos.dirigente_M.length ? lastId(grupos.dirigente_M) : rotaMap.dirigente.last_mesa,
-    last_ps_medium_id: grupos.dirigente_PS.length ? lastId(grupos.dirigente_PS) : rotaMap.dirigente.last_ps,
-    updated_at: new Date().toISOString(),
-  };
-
-  await sb.from("rotacao").update(updDir).eq("group_type", "dirigente");
-
-  if (grupos.incorporacao.length) {
-    await sb
-      .from("rotacao")
-      .update({ last_medium_id: lastId(grupos.incorporacao), updated_at: new Date().toISOString() })
-      .eq("group_type", "incorporacao");
-  }
-
-  if (grupos.desenvolvimento.length) {
-    await sb
-      .from("rotacao")
-      .update({ last_medium_id: lastId(grupos.desenvolvimento), updated_at: new Date().toISOString() })
-      .eq("group_type", "desenvolvimento");
+    setText("resultadoSalvar", "✅ Chamada registrada com sucesso!");
+  } catch (e) {
+    console.error("Exceção salvar:", e);
+    setText("resultadoSalvar", "❌ Erro inesperado ao salvar.");
+  } finally {
+    disable("btnSalvar", false);
   }
 }
 
-// =================== ADMIN (PARTICIPANTES) ===================
-window.renderListaAdmin = function renderListaAdmin() {
-  const container = document.getElementById("listaAdmin");
-  const q = (document.getElementById("busca").value || "").trim().toLowerCase();
+async function atualizarRotacao(registros) {
+  // regra:
+  // - mesa: se status == M => esse médium vira last_medium_id do grupo dele (exceto carencia)
+  // - psicografia: se status == PS => esse dirigente vira last_medium_id do group_type='psicografia'
+  // Observação: carência não entra em rotação.
 
-  const lista = mediunsCache
-    .slice()
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .filter((m) => !q || m.name.toLowerCase().includes(q));
+  // Precisamos mapear medium_id -> group_type
+  const byId = new Map(mediumsCache.map((m) => [m.id, m.group_type]));
 
-  container.innerHTML = "";
+  const mesaByGroup = {
+    dirigente: null,
+    incorporacao: null,
+    desenvolvimento: null,
+  };
+  let psDirigenteId = null;
 
-  lista.forEach((m) => {
-    const row = document.createElement("div");
-    row.className = "admin-row";
+  for (const r of registros) {
+    const g = byId.get(r.medium_id);
+    if (!g) continue;
 
-    row.innerHTML = `
-      <div class="admin-left">
-        <div class="admin-name">${m.name}</div>
-        <div class="admin-meta">
-          <span class="chip">${m.group_type}</span>
-          ${m.active ? `<span class="chip ok">ativo</span>` : `<span class="chip bad">inativo</span>`}
+    if (r.status === "M") {
+      if (g !== "carencia" && mesaByGroup.hasOwnProperty(g)) {
+        mesaByGroup[g] = r.medium_id;
+      }
+    }
+
+    if (r.status === "PS") {
+      // psicografia somente para dirigente
+      if (g === "dirigente") psDirigenteId = r.medium_id;
+    }
+  }
+
+  // upsert mesa por grupo
+  for (const g of Object.keys(mesaByGroup)) {
+    const mid = mesaByGroup[g];
+    if (!mid) continue;
+
+    const { error } = await sb
+      .from("rotacao")
+      .upsert({ group_type: g, last_medium_id: mid, updated_at: new Date().toISOString() }, { onConflict: "group_type" });
+
+    if (error) console.warn("Falha upsert rotacao mesa:", g, error);
+  }
+
+  // upsert psicografia
+  if (psDirigenteId) {
+    const { error } = await sb
+      .from("rotacao")
+      .upsert(
+        { group_type: "psicografia", last_medium_id: psDirigenteId, updated_at: new Date().toISOString() },
+        { onConflict: "group_type" }
+      );
+    if (error) console.warn("Falha upsert rotacao psicografia:", error);
+  }
+}
+
+/* =========================
+   ADMIN - PARTICIPANTES (CRUD)
+========================= */
+let adminEditId = null;
+
+async function listarParticipantesAdmin() {
+  const box = $("listaParticipantesAdmin");
+  if (!box) return;
+
+  box.innerHTML = `<div class="empty">Carregando...</div>`;
+
+  try {
+    const { data, error } = await sb.from("mediums").select("*").order("name", { ascending: true });
+    if (error) {
+      console.error("Erro listar participantes:", error);
+      box.innerHTML = `<div class="empty">Erro ao listar (verifique RLS).</div>`;
+      return;
+    }
+
+    const rows = data || [];
+    if (rows.length === 0) {
+      box.innerHTML = `<div class="empty">Nenhum participante cadastrado.</div>`;
+      return;
+    }
+
+    box.innerHTML = "";
+    rows.forEach((m) => {
+      const line = document.createElement("div");
+      line.className = "admin-row";
+
+      const ativo = m.active !== false;
+
+      line.innerHTML = `
+        <div class="admin-col name">
+          <b>${escapeHtml(m.name || "")}</b>
+          <span class="admin-mini">${escapeHtml(m.group_type || "")}</span>
         </div>
-      </div>
+        <div class="admin-col actions">
+          <button class="btn-mini" data-act="edit" data-id="${m.id}">Editar</button>
+          <button class="btn-mini" data-act="toggle" data-id="${m.id}">${ativo ? "Desativar" : "Ativar"}</button>
+          <button class="btn-mini danger" data-act="del" data-id="${m.id}">Excluir</button>
+        </div>
+      `;
 
-      <div class="admin-right">
-        <select class="mini" onchange="adminTrocarGrupo('${m.id}', this.value)">
-          <option value="dirigente" ${m.group_type === "dirigente" ? "selected" : ""}>dirigente</option>
-          <option value="incorporacao" ${m.group_type === "incorporacao" ? "selected" : ""}>incorporacao</option>
-          <option value="desenvolvimento" ${m.group_type === "desenvolvimento" ? "selected" : ""}>desenvolvimento</option>
-          <option value="carencia" ${m.group_type === "carencia" ? "selected" : ""}>carencia</option>
-        </select>
+      box.appendChild(line);
+    });
 
-        <button class="btn mini" onclick="adminToggleAtivo('${m.id}', ${m.active ? "false" : "true"})">
-          ${m.active ? "Desativar" : "Ativar"}
-        </button>
+    // bind
+    box.querySelectorAll("button[data-act]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const act = btn.getAttribute("data-act");
+        const id = btn.getAttribute("data-id");
+        if (!id) return;
 
-        <button class="btn mini danger" onclick="adminExcluir('${m.id}')">Excluir</button>
-      </div>
-    `;
+        if (act === "edit") await carregarParticipanteParaEditar(id);
+        if (act === "toggle") await toggleAtivoParticipante(id);
+        if (act === "del") await excluirParticipante(id);
+      });
+    });
+  } catch (e) {
+    console.error("Exceção listar participantes:", e);
+    box.innerHTML = `<div class="empty">Erro inesperado.</div>`;
+  }
+}
 
-    container.appendChild(row);
-  });
-};
+function prepararNovoParticipanteAdmin() {
+  adminEditId = null;
+  setText("adminTituloForm", "Novo participante");
+  if ($("adminNome")) $("adminNome").value = "";
+  if ($("adminGrupo")) $("adminGrupo").value = "desenvolvimento";
+  if ($("adminAtivo")) $("adminAtivo").checked = true;
+  setText("adminMsg", "");
+}
 
-window.criarParticipante = async function criarParticipante() {
-  const nome = (document.getElementById("novoNome").value || "").trim();
-  const grupo = document.getElementById("novoGrupo").value;
-  const msg = document.getElementById("adminMsg");
-  msg.textContent = "";
-  msg.className = "result";
+async function carregarParticipanteParaEditar(id) {
+  setText("adminMsg", "");
+
+  const { data, error } = await sb.from("mediums").select("*").eq("id", id).single();
+  if (error) {
+    console.error("Erro carregar participante:", error);
+    setText("adminMsg", "Erro ao carregar participante (RLS?).");
+    return;
+  }
+
+  adminEditId = id;
+  setText("adminTituloForm", "Editar participante");
+
+  if ($("adminNome")) $("adminNome").value = data.name || "";
+  if ($("adminGrupo")) $("adminGrupo").value = data.group_type || "desenvolvimento";
+  if ($("adminAtivo")) $("adminAtivo").checked = data.active !== false;
+}
+
+async function salvarParticipanteAdmin() {
+  setText("adminMsg", "");
+
+  const nome = $("adminNome")?.value?.trim() || "";
+  const grupo = $("adminGrupo")?.value?.trim() || "";
+  const ativo = $("adminAtivo") ? $("adminAtivo").checked : true;
 
   if (!nome) {
-    msg.textContent = "Digite um nome.";
-    msg.classList.add("bad");
+    setText("adminMsg", "Informe o nome.");
+    return;
+  }
+  if (!grupo || !GROUPS.includes(grupo)) {
+    setText("adminMsg", "Grupo inválido.");
     return;
   }
 
   const payload = {
     name: nome,
     group_type: grupo,
-    active: true,
-    faltas: 0,
-    presencas: 0,
-    mesa: 0,
-    psicografia: 0,
-    carencia_total: 0,
-    carencia_atual: 0,
-    primeira_incorporacao: false,
+    active: ativo,
+    updated_at: new Date().toISOString(),
   };
 
-  const { error } = await sb.from("mediuns").insert(payload);
+  try {
+    if (!adminEditId) {
+      // criar
+      payload.faltas = 0;
+      payload.presencas = 0;
+      payload.mesa = 0;
+      payload.psicografia = 0;
+      payload.carencia_total = 0;
+      payload.carencia_atual = 0;
+      payload.primeira_incorporacao = false;
+      payload.inserted_at = new Date().toISOString();
+
+      const { error } = await sb.from("mediums").insert(payload);
+      if (error) {
+        console.error("Erro inserir participante:", error);
+        setText("adminMsg", "Erro ao inserir (verifique RLS).");
+        return;
+      }
+      setText("adminMsg", "✅ Participante criado.");
+    } else {
+      // editar
+      const { error } = await sb.from("mediums").update(payload).eq("id", adminEditId);
+      if (error) {
+        console.error("Erro atualizar participante:", error);
+        setText("adminMsg", "Erro ao atualizar (verifique RLS).");
+        return;
+      }
+      setText("adminMsg", "✅ Alterações salvas.");
+    }
+
+    await listarParticipantesAdmin();
+    await carregarTudo(); // reflete na chamada
+  } catch (e) {
+    console.error("Exceção salvar participante:", e);
+    setText("adminMsg", "Erro inesperado ao salvar.");
+  }
+}
+
+async function toggleAtivoParticipante(id) {
+  setText("adminMsg", "");
+
+  const { data, error } = await sb.from("mediums").select("id, active").eq("id", id).single();
   if (error) {
-    msg.textContent = "Erro: " + error.message;
-    msg.classList.add("bad");
+    console.error("Erro toggle:", error);
+    setText("adminMsg", "Erro ao alterar ativo (RLS?).");
     return;
   }
 
-  document.getElementById("novoNome").value = "";
-  msg.textContent = "✅ Adicionado!";
-  msg.classList.add("ok");
+  const novo = !(data.active !== false);
 
-  await carregarMediuns();
-  renderListaAdmin();
-  renderGruposChamada();
-};
+  const { error: upErr } = await sb
+    .from("mediums")
+    .update({ active: novo, updated_at: new Date().toISOString() })
+    .eq("id", id);
 
-window.adminTrocarGrupo = async function adminTrocarGrupo(id, grupo) {
-  await sb.from("mediuns").update({ group_type: grupo }).eq("id", id);
-  await carregarMediuns();
-  renderListaAdmin();
-  renderGruposChamada();
-};
+  if (upErr) {
+    console.error("Erro update ativo:", upErr);
+    setText("adminMsg", "Erro ao salvar (RLS?).");
+    return;
+  }
 
-window.adminToggleAtivo = async function adminToggleAtivo(id, ativo) {
-  await sb.from("mediuns").update({ active: ativo }).eq("id", id);
-  await carregarMediuns();
-  renderListaAdmin();
-  renderGruposChamada();
-};
+  await listarParticipantesAdmin();
+  await carregarTudo();
+}
 
-window.adminExcluir = async function adminExcluir(id) {
-  const ok = confirm("Excluir este participante? (isso não apaga chamadas antigas)");
+async function excluirParticipante(id) {
+  setText("adminMsg", "");
+
+  // cuidado: se tiver FK em chamadas, delete pode falhar. Nesse caso, desative ao invés de excluir.
+  const ok = confirm("Tem certeza que deseja excluir? Se houver chamadas registradas, pode falhar.");
   if (!ok) return;
 
-  const { error } = await sb.from("mediuns").delete().eq("id", id);
-  if (error) alert("Erro: " + error.message);
+  const { error } = await sb.from("mediums").delete().eq("id", id);
+  if (error) {
+    console.error("Erro delete participante:", error);
+    setText("adminMsg", "Não foi possível excluir (provável FK). Sugestão: use Desativar.");
+    return;
+  }
 
-  await carregarMediuns();
-  renderListaAdmin();
-  renderGruposChamada();
-};
+  await listarParticipantesAdmin();
+  await carregarTudo();
+}
+
+/* =========================
+   START
+========================= */
+document.addEventListener("DOMContentLoaded", initApp);
