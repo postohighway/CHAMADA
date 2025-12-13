@@ -1,35 +1,49 @@
-/* =========================================================
-   CHAMADA DE MÉDIUNS — app.js (VERSÃO FINAL FUNCIONAL)
-   GitHub Pages + Supabase (SEM AUTH / SEM LOGIN)
-   ========================================================= */
+/**********************************************************
+ * CHAMADA DE MÉDIUNS — app.js (VERSÃO FINAL ESTÁVEL)
+ * - Sem login
+ * - Supabase anon
+ * - Não quebra se faltar elemento no HTML
+ **********************************************************/
 
-/* ========= CONFIG SUPABASE (SEUS DADOS REAIS) ========= */
+/* ===== CONFIG SUPABASE ===== */
 const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co";
 const SUPABASE_ANON_KEY =
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5vdXp6eXJldnlrZG1ucWlmamp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUzOTYzMDIsImV4cCI6MjA4MDk3MjMwMn0.s2OzeSXe7CrKDNl6fXkTcMj_Vgitod0l0h0BiJA79nc";
 
-/* ========= ESTADO ========= */
+/* ===== ESTADO ===== */
 let sb = null;
-let participantes = [];
+let mediumsCache = [];
 let rotacaoMap = {};
-let conectado = false;
 
-/* ========= HELPERS DOM ========= */
+/* ===== HELPERS DOM (NÃO QUEBRAM) ===== */
 const $ = (id) => document.getElementById(id);
 
-function setStatus(txt, ok = false) {
-  const el = $("statusConexao");
-  if (!el) return;
-  el.innerText = txt;
-  el.style.color = ok ? "#22c55e" : "#f87171";
+function setText(id, txt) {
+  const el = $(id);
+  if (el) el.innerText = txt;
 }
 
-/* ========= INIT ========= */
+function setHTML(id, html) {
+  const el = $(id);
+  if (el) el.innerHTML = html;
+}
+
+function setStatus(msg, ok = false) {
+  const el = $("statusConexao");
+  if (!el) {
+    console.warn("statusConexao:", msg);
+    return;
+  }
+  el.innerText = msg;
+  el.style.color = ok ? "#22c55e" : "#ef4444";
+}
+
+/* ===== INIT ===== */
 window.addEventListener("DOMContentLoaded", async () => {
   try {
     // 1) Confere Supabase JS
     if (!window.supabase || !window.supabase.createClient) {
-      setStatus("❌ Supabase JS não carregou (ver script no index.html)");
+      setStatus("Supabase JS não carregou (script)", false);
       return;
     }
 
@@ -39,26 +53,25 @@ window.addEventListener("DOMContentLoaded", async () => {
       SUPABASE_ANON_KEY
     );
 
-    setStatus("🔄 Conectando ao Supabase...");
+    setStatus("Conectando ao Supabase…");
 
-    // 3) Teste REAL de conexão
-    await testeConexao();
+    // 3) Teste real de conexão
+    await testarConexao();
 
-    // 4) Carrega dados
-    await carregarParticipantes();
+    // 4) Carregamentos
     await carregarRotacao();
+    await carregarMediums();
 
-    setStatus("✅ Conectado", true);
-
+    setStatus("Conectado ✔", true);
   } catch (err) {
     console.error(err);
-    setStatus("❌ Erro: " + err.message);
+    setStatus("Erro: " + err.message);
   }
 });
 
-/* ========= TESTE DE CONEXÃO ========= */
-async function testeConexao() {
-  const { data, error } = await sb
+/* ===== TESTE DE CONEXÃO ===== */
+async function testarConexao() {
+  const { error } = await sb
     .from("mediums")
     .select("id")
     .limit(1);
@@ -68,71 +81,82 @@ async function testeConexao() {
   }
 }
 
-/* ========= PARTICIPANTES ========= */
-async function carregarParticipantes() {
-  const { data, error } = await sb
-    .from("mediums")
-    .select("*")
-    .order("nome", { ascending: true });
-
-  if (error) {
-    throw new Error("Erro ao carregar participantes: " + error.message);
-  }
-
-  participantes = data || [];
-  renderParticipantes();
-}
-
-function renderParticipantes() {
-  const container = $("listaParticipantes");
-  if (!container) return;
-
-  container.innerHTML = "";
-
-  if (participantes.length === 0) {
-    container.innerHTML = "<p>Nenhum participante cadastrado.</p>";
-    return;
-  }
-
-  participantes.forEach((p) => {
-    const div = document.createElement("div");
-    div.className = "participante";
-
-    div.innerHTML = `
-      <strong>${p.nome}</strong>
-      <span class="grupo">${p.grupo || ""}</span>
-    `;
-
-    container.appendChild(div);
-  });
-}
-
-/* ========= ROTAÇÃO ========= */
+/* ===== ROTACAO ===== */
 async function carregarRotacao() {
   const { data, error } = await sb
     .from("rotacao")
     .select("*");
 
   if (error) {
-    throw new Error("Erro ao carregar rotação: " + error.message);
+    throw new Error("Erro rotacao: " + error.message);
   }
 
   rotacaoMap = {};
   (data || []).forEach((r) => {
-    rotacaoMap[r.grupo] = r.medium_id;
+    rotacaoMap[r.group_type] = r.last_medium_id;
   });
 }
 
-/* ========= CHAMADA ========= */
-async function salvarChamada(payload) {
-  const { error } = await sb
-    .from("chamadas")
-    .insert(payload);
+/* ===== MEDIUNS ===== */
+async function carregarMediums() {
+  const { data, error } = await sb
+    .from("mediums")
+    .select("*")
+    .eq("active", true)
+    .order("name");
 
   if (error) {
-    alert("Erro ao salvar chamada: " + error.message);
+    throw new Error("Erro mediums: " + error.message);
+  }
+
+  mediumsCache = data || [];
+  renderizarGrupos();
+}
+
+/* ===== RENDER ===== */
+function renderizarGrupos() {
+  renderGrupo("dirigente", "listaDirigentes");
+  renderGrupo("incorporacao", "listaIncorporacao");
+  renderGrupo("desenvolvimento", "listaDesenvolvimento");
+  renderGrupo("carencia", "listaCarencia");
+}
+
+function renderGrupo(tipo, divId) {
+  const el = $(divId);
+  if (!el) return;
+
+  const lista = mediumsCache.filter((m) => m.group_type === tipo);
+
+  if (lista.length === 0) {
+    el.innerHTML = "<div>Nenhum médium neste grupo.</div>";
     return;
   }
 
-  alert("Chamada salva com sucesso!");
+  const lastId = rotacaoMap[tipo] || null;
+  let nextId = null;
+
+  if (lastId) {
+    const idx = lista.findIndex((m) => m.id === lastId);
+    nextId = lista[(idx + 1) % lista.length]?.id;
+  } else {
+    nextId = lista[0].id;
+  }
+
+  el.innerHTML = "";
+
+  lista.forEach((m) => {
+    const card = document.createElement("div");
+    card.className = "medium-card";
+
+    if (m.id === nextId) {
+      card.classList.add("medium-next");
+    }
+
+    card.innerHTML = `
+      <strong>${m.name}</strong>
+      <div>${m.group_type}</div>
+    `;
+
+    el.appendChild(card);
+  });
 }
