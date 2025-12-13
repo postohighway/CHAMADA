@@ -1,65 +1,120 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-br">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Chamada de Médiuns — Diagnóstico</title>
-  <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:0;background:#f6f7fb}
-    header{padding:14px 16px;background:#111827;color:#fff}
-    .wrap{max-width:980px;margin:0 auto;padding:14px 12px}
-    .card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:12px;margin:12px 0}
-    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-    .muted{color:#6b7280;font-size:14px}
-    .ok{color:#065f46;font-weight:900}
-    .bad{color:#b91c1c;font-weight:900}
-    code{background:#f3f4f6;padding:2px 6px;border-radius:8px}
-    .k{min-width:220px;font-weight:800}
-  </style>
+  <title>Chamada de Médiuns</title>
+  <link rel="stylesheet" href="./style.css?v=1" />
+
+  <!-- ✅ SUAS CHAVES (já embutidas) -->
+  <script>
+    window.__SUPABASE_URL__ = "https://nouzzyrevykdmnqifjjt.supabase.co";
+    window.__SUPABASE_ANON_KEY__ = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5vdXp6eXJldnlrZG1ucWlmamp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUzOTYzMDIsImV4cCI6MjA4MDk3MjMwMn0.s2OzeSXe7CrKDNl6fXkTcMj_Vgitod0l0h0BiJA79nc";
+  </script>
+
+  <!-- Supabase primeiro -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <!-- App depois (defer) -->
+  <script src="./app.js?v=1" defer></script>
 </head>
+
 <body>
-  <header>
-    <div class="wrap">
-      <div style="font-weight:900">Chamada de Médiuns — Painel de Diagnóstico</div>
-      <div class="muted">Se algo não carregar, o motivo aparece aqui na tela.</div>
+  <header class="top">
+    <div class="top__title">
+      <h1>Chamada de Médiuns</h1>
+      <p>Reunião: terça-feira 18:30 (exceto feriados)</p>
+    </div>
+
+    <div class="top__actions">
+      <button id="btnTabChamada" class="chip chip--active" type="button">Chamada</button>
+      <button id="btnTabParticipantes" class="chip" type="button">Participantes</button>
     </div>
   </header>
 
   <main class="wrap">
-    <div class="card">
-      <div class="row"><div class="k">1) index.html</div><div id="d_index" class="bad">NÃO</div></div>
-      <div class="row"><div class="k">2) supabase-js</div><div id="d_supabase" class="bad">NÃO</div></div>
-      <div class="row"><div class="k">3) app.js</div><div id="d_app" class="bad">NÃO</div></div>
-      <div class="row"><div class="k">4) Teste SELECT</div><div id="d_select" class="bad">NÃO</div></div>
-      <div style="margin-top:10px" class="muted">
-        Dica: se <b>3) app.js</b> ficar “NÃO”, o problema é <b>caminho/arquivo/Pages</b>, não é Supabase.
-      </div>
-      <div style="margin-top:10px" class="muted">Mensagem:</div>
-      <div id="d_msg" style="white-space:pre-wrap"></div>
-    </div>
+    <section class="statusbar">
+      <div id="statusConn" class="statusbar__item">Conectando…</div>
+      <div id="statusMsg" class="statusbar__item statusbar__item--muted"></div>
+    </section>
 
-    <div class="card">
-      <div class="muted">
-        Teste manual rápido (abra no navegador):
-        <div>• <code>.../app.js</code> deve abrir seu JS (não pode dar 404)</div>
-        <div>• <code>.../index.html</code> deve mostrar este painel</div>
+    <!-- ABA: CHAMADA -->
+    <section id="abaChamada" class="panel">
+      <div class="panel__row">
+        <div class="field">
+          <label>Data da chamada</label>
+          <div class="field__inline">
+            <input id="dataChamada" type="date" />
+            <button id="btnVerificarData" class="btn btn--soft" type="button">Verificar data</button>
+          </div>
+          <div id="avisoData" class="help"></div>
+        </div>
+
+        <div class="legend">
+          <span><span class="dot dot--yellow"></span> Próximo (Mesa)</span>
+          <span><span class="dot dot--red"></span> Próximo (Psicografia)</span>
+          <span><span class="dot dot--danger"></span> Falta alta (≥ 30%)</span>
+        </div>
       </div>
-    </div>
+
+      <div class="panel__row panel__row--actions">
+        <button id="btnSalvar" class="btn btn--primary" type="button">Salvar chamada</button>
+        <div id="resultadoSalvar" class="help"></div>
+      </div>
+
+      <h2 class="sectionTitle">Dirigentes</h2>
+      <div id="listaDirigentes" class="list"></div>
+
+      <h2 class="sectionTitle">Médiuns de Incorporação</h2>
+      <div id="listaIncorporacao" class="list"></div>
+
+      <h2 class="sectionTitle">Médiuns em Desenvolvimento</h2>
+      <div id="listaDesenvolvimento" class="list"></div>
+
+      <h2 class="sectionTitle">Médiuns em Carência</h2>
+      <p class="muted">Carência não senta na mesa (somente P/F).</p>
+      <div id="listaCarencia" class="list"></div>
+    </section>
+
+    <!-- ABA: PARTICIPANTES -->
+    <section id="abaParticipantes" class="panel hidden">
+      <div class="panel__row">
+        <div class="field w100">
+          <label>Buscar</label>
+          <input id="busca" type="text" placeholder="Digite parte do nome..." />
+          <div class="help muted" id="statusAdmin"></div>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div class="card">
+          <h3>Novo participante</h3>
+
+          <div class="field">
+            <label>Nome</label>
+            <input id="novoNome" type="text" placeholder="Ex.: Marcelo Loureiro" />
+          </div>
+
+          <div class="field">
+            <label>Grupo</label>
+            <select id="novoGrupo">
+              <option value="dirigente">Dirigente</option>
+              <option value="incorporacao">Incorporação</option>
+              <option value="desenvolvimento">Desenvolvimento</option>
+              <option value="carencia">Carência</option>
+            </select>
+          </div>
+
+          <button id="btnAdicionar" class="btn btn--primary" type="button">Adicionar</button>
+          <div id="msgAdmin" class="help"></div>
+        </div>
+
+        <div class="card">
+          <h3>Lista</h3>
+          <div id="listaAdmin" class="adminList"></div>
+        </div>
+      </div>
+    </section>
   </main>
-
-  <script>
-    // 1) index carregou
-    document.getElementById("d_index").textContent = "OK";
-    document.getElementById("d_index").className = "ok";
-  </script>
-
-  <!-- 2) supabase-js (UMD) -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"
-          onload="document.getElementById('d_supabase').textContent='OK';document.getElementById('d_supabase').className='ok';"
-          onerror="document.getElementById('d_msg').textContent='Falhou ao carregar supabase-js. Internet/CSP.';">
-  </script>
-
-  <!-- 3) app.js (se não carregar, fica NÂO) -->
-  <script src="./app.js?v=diag1"></script>
 </body>
 </html>
