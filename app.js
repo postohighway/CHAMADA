@@ -1,340 +1,213 @@
 /* =========================
    CONFIGURAÇÃO SUPABASE
 ========================= */
-const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co";
-const SUPABASE_ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5vdXp6eXJldnlrZG1ucWlmamp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUzOTYzMDIsImV4cCI6MjA4MDk3MjMwMn0.s2OzeSXe7CrKDNl6fXkTcMj_Vgitod0l0h0BiJA79nc";
+const SUPABASE_URL = "COLE_AQUI_SUA_URL";
+const SUPABASE_ANON_KEY = "COLE_AQUI_SUA_ANON_KEY";
 
-let sb = null;
+const { createClient } = window.supabase;
+const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 /* =========================
-   CACHE / ESTADO
+   STATE
 ========================= */
 let mediumsCache = [];
-let rotaMap = {
-  dirigente: null,        // last_medium_id (mesa)
-  incorporacao: null,     // last_medium_id (mesa)
-  desenvolvimento: null,  // last_medium_id (mesa)
-  carencia: null,         // sempre null (sem rotação)
-  psicografia: null,      // last_medium_id (psicografia - dirigente)
-};
-
-const GROUPS = ["dirigente", "incorporacao", "desenvolvimento", "carencia"];
+let rotacaoMap = {}; // group_type -> last_medium_id
+let session = null;
 
 /* =========================
-   HELPERS DOM
+   HELPERS UI
 ========================= */
-function $(id) {
-  return document.getElementById(id);
-}
+function $(id) { return document.getElementById(id); }
+
 function setText(id, txt) {
   const el = $(id);
-  if (el) el.textContent = txt;
+  if (el) el.textContent = txt || "";
 }
-function setHTML(id, html) {
+
+function show(id, on = true) {
   const el = $(id);
-  if (el) el.innerHTML = html;
+  if (!el) return;
+  el.style.display = on ? "block" : "none";
 }
-function show(id) {
-  const el = $(id);
-  if (el) el.style.display = "block";
+
+function normalizeGroupType(v) {
+  const s = (v || "").toString().trim().toLowerCase();
+  if (s === "dirigente") return "dirigente";
+  if (s === "incorporacao") return "incorporacao";
+  if (s === "desenvolvimento") return "desenvolvimento";
+  if (s === "carencia") return "carencia";
+  // fallback
+  return s;
 }
-function hide(id) {
-  const el = $(id);
-  if (el) el.style.display = "none";
+
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
 }
-function disable(id, disabled) {
-  const el = $(id);
-  if (el) el.disabled = !!disabled;
+
+function isTuesday(dateISO) {
+  const d = new Date(dateISO + "T03:00:00");
+  return d.getDay() === 2; // 2 = terça
 }
 
 /* =========================
-   INIT
+   AUTH
 ========================= */
-function initSupabaseOrDie() {
-  if (!window.supabase || !window.supabase.createClient) {
-    throw new Error(
-      "Supabase JS não carregou. Confirme o <script src='https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2'></script> no index.html"
-    );
-  }
-  sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+async function initAuth() {
+  // tenta pegar sessão atual
+  const { data } = await sb.auth.getSession();
+  session = data.session || null;
+
+  sb.auth.onAuthStateChange((_event, _session) => {
+    session = _session;
+  });
 }
 
-async function initApp() {
-  try {
-    initSupabaseOrDie();
-  } catch (e) {
-    console.error(e);
-    setText("erroGlobal", "Erro: supabase-js não carregou no navegador.");
-    return;
-  }
-
-  // Setar data padrão (hoje) se existir input
-  const dataInput = $("dataChamada");
-  if (dataInput && !dataInput.value) {
-    const hoje = new Date();
-    const yyyy = hoje.getFullYear();
-    const mm = String(hoje.getMonth() + 1).padStart(2, "0");
-    const dd = String(hoje.getDate()).padStart(2, "0");
-    dataInput.value = `${yyyy}-${mm}-${dd}`;
-  }
-
-  // Bind botões
-  const btnVerificar = $("btnVerificarData");
-  if (btnVerificar) btnVerificar.addEventListener("click", verificarData);
-
-  const btnSalvar = $("btnSalvar");
-  if (btnSalvar) btnSalvar.addEventListener("click", salvarChamada);
-
-  const btnAbaChamada = $("tabChamada");
-  if (btnAbaChamada) btnAbaChamada.addEventListener("click", () => mostrarAba("chamada"));
-
-  const btnAbaAdmin = $("tabAdmin");
-  if (btnAbaAdmin) btnAbaAdmin.addEventListener("click", () => mostrarAba("admin"));
-
-  const btnSair = $("btnSair");
-  if (btnSair) btnSair.addEventListener("click", logout);
-
-  const btnLogin = $("btnLogin");
-  if (btnLogin) btnLogin.addEventListener("click", login);
-
-  const btnSalvarParticipante = $("btnSalvarParticipante");
-  if (btnSalvarParticipante) btnSalvarParticipante.addEventListener("click", salvarParticipanteAdmin);
-
-  const btnNovoParticipante = $("btnNovoParticipante");
-  if (btnNovoParticipante) btnNovoParticipante.addEventListener("click", prepararNovoParticipanteAdmin);
-
-  // Se existe loginCard, começa em login. Se não, já abre app direto.
-  if ($("loginCard")) {
-    show("loginCard");
-    hide("app");
-    // tenta manter sessão:
-    try {
-      const { data } = await sb.auth.getSession();
-      if (data && data.session) {
-        hide("loginCard");
-        show("app");
-        await bootAfterLogin();
-      }
-    } catch (e) {
-      // se auth falhar, só deixa login
-      console.warn("Auth session check falhou:", e);
-    }
-  } else {
-    show("app");
-    await bootAfterLogin();
-  }
-}
-
-async function bootAfterLogin() {
-  setText("erroGlobal", "");
-  await carregarTudo();
-  mostrarAba("chamada");
-}
-
-/* =========================
-   LOGIN / LOGOUT
-========================= */
 async function login() {
-  const email = $("email")?.value?.trim() || "";
-  const senha = $("senha")?.value?.trim() || "";
-  setText("loginError", "");
+  const email = $("email")?.value?.trim();
+  const senha = $("senha")?.value?.trim();
+  const box = $("loginError");
+  if (box) box.textContent = "";
 
   if (!email || !senha) {
-    setText("loginError", "Preencha email e senha.");
+    if (box) box.textContent = "Preencha email e senha.";
     return;
   }
 
-  try {
-    const { error } = await sb.auth.signInWithPassword({ email, password: senha });
-    if (error) {
-      console.error("Erro login:", error);
-      setText("loginError", "Erro no login: " + (error.message || "desconhecido"));
-      return;
-    }
-    hide("loginCard");
-    show("app");
-    await bootAfterLogin();
-  } catch (e) {
-    console.error("Exceção login:", e);
-    setText("loginError", "Erro inesperado ao tentar entrar.");
+  const { error } = await sb.auth.signInWithPassword({ email, password: senha });
+  if (error) {
+    if (box) box.textContent = "Erro no login: " + error.message;
+    return;
   }
+
+  show("loginCard", false);
+  show("app", true);
+
+  const dc = $("dataChamada");
+  if (dc) dc.value = todayISO();
+
+  await bootApp();
 }
 
 async function logout() {
-  try {
-    await sb.auth.signOut();
-  } catch (e) {
-    console.warn("signOut falhou:", e);
-  }
-  if ($("loginCard")) {
-    show("loginCard");
-    hide("app");
-  }
+  await sb.auth.signOut();
+  show("app", false);
+  show("loginCard", true);
 }
 
 /* =========================
-   ABAS
+   NAVEGAÇÃO ABAS
 ========================= */
-function mostrarAba(qual) {
+async function mostrarAba(qual) {
   const abaChamada = $("abaChamada");
   const abaAdmin = $("abaAdmin");
+  const tabChamada = $("tabChamada");
+  const tabAdmin = $("tabAdmin");
 
-  if (qual === "admin") {
+  if (qual === "chamada") {
+    if (abaChamada) abaChamada.style.display = "block";
+    if (abaAdmin) abaAdmin.style.display = "none";
+    tabChamada?.classList.add("active");
+    tabAdmin?.classList.remove("active");
+    await renderGruposChamada();
+  } else {
     if (abaChamada) abaChamada.style.display = "none";
     if (abaAdmin) abaAdmin.style.display = "block";
-    $("tabChamada")?.classList.remove("active");
-    $("tabAdmin")?.classList.add("active");
-    listarParticipantesAdmin();
-  } else {
-    if (abaAdmin) abaAdmin.style.display = "none";
-    if (abaChamada) abaChamada.style.display = "block";
-    $("tabAdmin")?.classList.remove("active");
-    $("tabChamada")?.classList.add("active");
+    tabChamada?.classList.remove("active");
+    tabAdmin?.classList.add("active");
+    await listarParticipantesAdmin(); // <- aqui estava “Conectando…” pra sempre
   }
 }
 
 /* =========================
-   DATA / FERIADOS
+   SUPABASE LOADERS
 ========================= */
-function getSelectedDateISO() {
-  // suporte a input date (yyyy-mm-dd) ou texto (dd/mm/yyyy)
-  const raw = $("dataChamada")?.value?.trim() || "";
-  if (!raw) return null;
+async function carregarRotacao() {
+  rotacaoMap = {};
+  const { data, error } = await sb.from("rotacao").select("*");
+  if (error) throw error;
 
-  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
-
-  // dd/mm/yyyy
-  const m = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
-  if (m) return `${m[3]}-${m[2]}-${m[1]}`;
-
-  return null;
+  (data || []).forEach(r => {
+    rotacaoMap[r.group_type] = r.last_medium_id;
+  });
 }
 
-function getDayOfWeekBR(dateISO) {
-  // força TZ BR pra não virar o dia
-  const d = new Date(dateISO + "T12:00:00-03:00");
-  return d.getDay(); // 0 dom ... 2 ter ...
+async function carregarMediums() {
+  // se a tabela chama "mediums", ok.
+  const { data, error } = await sb
+    .from("mediums")
+    .select("*")
+    .order("name", { ascending: true });
+
+  if (error) throw error;
+  mediumsCache = data || [];
 }
 
+/* =========================
+   VERIFICAR DATA (terça e não feriado)
+========================= */
 async function verificarData() {
-  setText("avisoData", "");
-  const dateISO = getSelectedDateISO();
-  if (!dateISO) {
-    setText("avisoData", "Selecione uma data válida.");
+  const dataISO = $("dataChamada")?.value;
+  const aviso = $("avisoData");
+  if (aviso) aviso.textContent = "";
+
+  if (!dataISO) {
+    if (aviso) aviso.textContent = "Selecione uma data.";
     return false;
   }
 
-  // Terça-feira
-  const dow = getDayOfWeekBR(dateISO);
-  if (dow !== 2) {
-    setText("avisoData", "❌ Chamada só pode ser feita em TERÇA-FEIRA.");
+  if (!isTuesday(dataISO)) {
+    if (aviso) aviso.textContent = "❌ Chamada só pode ser feita em TERÇA-FEIRA.";
     return false;
   }
 
-  // Verificar feriado
+  // feriados
   try {
-    const { data, error } = await sb.from("feriados").select("data").eq("data", dateISO).limit(1);
-    if (error) {
-      console.error("Erro ao consultar feriados:", error);
-      setText("avisoData", "⚠️ Erro ao consultar feriados (verifique RLS/políticas).");
-      return false;
-    }
-    if (data && data.length > 0) {
-      setText("avisoData", "❌ Hoje é feriado! Chamada não permitida.");
+    const { data, error } = await sb.from("feriados").select("*").eq("data", dataISO);
+    if (error) throw error;
+    if ((data || []).length > 0) {
+      if (aviso) aviso.textContent = "❌ Hoje é feriado! Chamada não permitida.";
       return false;
     }
   } catch (e) {
-    console.error("Exceção feriados:", e);
-    setText("avisoData", "⚠️ Erro ao consultar feriados.");
+    if (aviso) aviso.textContent = "⚠️ Erro ao consultar feriados (verifique RLS/políticas).";
     return false;
   }
 
-  setText("avisoData", "✅ Data válida, pode registrar presença.");
+  if (aviso) aviso.textContent = "✅ Data válida, pode registrar presença.";
   return true;
 }
 
 /* =========================
-   CARREGAR DADOS
+   ROTAÇÃO / PRÓXIMOS
 ========================= */
-async function carregarTudo() {
-  setText("erroGlobal", "");
-  setText("resultadoSalvar", "");
-  await carregarRotacao();
-  await carregarMediums();
-  renderGruposChamada();
+function getNextId(lista, lastId) {
+  if (!lista || lista.length === 0) return null;
+  if (!lastId) return lista[0].id;
+  const idx = lista.findIndex(m => m.id === lastId);
+  if (idx === -1 || idx === lista.length - 1) return lista[0].id;
+  return lista[idx + 1].id;
 }
 
-async function carregarMediums() {
-  try {
-    const { data, error } = await sb
-      .from("mediums")
-      .select("*")
-      .order("name", { ascending: true });
-
-    if (error) {
-      console.error("Erro carregar mediums:", error);
-      setText("erroGlobal", "Erro ao conectar no Supabase. Verifique URL/KEY e RLS das tabelas.");
-      mediumsCache = [];
-      return;
-    }
-
-    mediumsCache = (data || []).filter((m) => m.active !== false);
-  } catch (e) {
-    console.error("Exceção carregar mediums:", e);
-    setText("erroGlobal", "Erro ao conectar no Supabase. Verifique URL/KEY e RLS das tabelas.");
-    mediumsCache = [];
+function getRotacaoKey(groupType, kind) {
+  // kind: "mesa" | "ps"
+  if (groupType === "dirigente") {
+    if (kind === "ps") return "dirigente_ps";
+    return "dirigente_mesa";
   }
-}
-
-async function carregarRotacao() {
-  // rotacao esperado: group_type (PK), last_medium_id (mesa)
-  // adicional: usar row group_type='psicografia' para rotação de psicografia (dirigentes)
-  try {
-    const { data, error } = await sb.from("rotacao").select("*");
-    if (error) {
-      console.error("Erro carregar rotacao:", error);
-      // Não derruba o app — só não destaca
-      return;
-    }
-
-    // reset
-    rotaMap.dirigente = null;
-    rotaMap.incorporacao = null;
-    rotaMap.desenvolvimento = null;
-    rotaMap.carencia = null;
-    rotaMap.psicografia = null;
-
-    (data || []).forEach((r) => {
-      if (r.group_type && rotaMap.hasOwnProperty(r.group_type)) {
-        rotaMap[r.group_type] = r.last_medium_id || null;
-      }
-    });
-  } catch (e) {
-    console.error("Exceção rotacao:", e);
-  }
+  return groupType;
 }
 
 /* =========================
-   ROTACAO HELPERS
+   RENDER CHAMADA
 ========================= */
-function getNextIdByLastId(list, lastId) {
-  if (!list || list.length === 0) return null;
-  if (!lastId) return list[0].id;
+async function renderGruposChamada() {
+  // filtra ativos
+  const ativos = mediumsCache.filter(m => m.active !== false);
 
-  const idx = list.findIndex((m) => m.id === lastId);
-  if (idx === -1 || idx === list.length - 1) return list[0].id;
-  return list[idx + 1].id;
-}
-
-/* =========================
-   RENDER
-========================= */
-function renderGruposChamada() {
-  const dirigentes = mediumsCache.filter((m) => m.group_type === "dirigente");
-  const incorporacao = mediumsCache.filter((m) => m.group_type === "incorporacao");
-  const desenvolvimento = mediumsCache.filter((m) => m.group_type === "desenvolvimento");
-  const carencia = mediumsCache.filter((m) => m.group_type === "carencia");
+  const dirigentes = ativos.filter(m => normalizeGroupType(m.group_type) === "dirigente");
+  const incorporacao = ativos.filter(m => normalizeGroupType(m.group_type) === "incorporacao");
+  const desenvolvimento = ativos.filter(m => normalizeGroupType(m.group_type) === "desenvolvimento");
+  const carencia = ativos.filter(m => normalizeGroupType(m.group_type) === "carencia");
 
   renderGrupo("listaDirigentes", dirigentes, "dirigente");
   renderGrupo("listaIncorporacao", incorporacao, "incorporacao");
@@ -342,100 +215,87 @@ function renderGruposChamada() {
   renderGrupo("listaCarencia", carencia, "carencia");
 }
 
-function calcPercentFalta(m) {
+function calcPercFaltas(m) {
   const faltas = Number(m.faltas || 0);
   const pres = Number(m.presencas || 0);
-  const mesa = Number(m.mesa || 0);
-  const ps = Number(m.psicografia || 0);
-
-  // total considerado = faltas + presencas + mesa (+ psicografia como presença, se você quiser considerar)
-  const total = faltas + pres + mesa + ps;
+  const total = faltas + pres;
   if (total <= 0) return 0;
   return Math.round((faltas * 100) / total);
 }
 
-function buildRadiosHTML(groupType, id) {
-  // nome do grupo de radios: attendance_{id}
-  const name = `att_${id}`;
-
-  if (groupType === "carencia") {
-    // Carência: só P / F
-    return `
-      <label class="radio"><input type="radio" name="${name}" value="P"> <span>P</span></label>
-      <label class="radio"><input type="radio" name="${name}" value="F"> <span>F</span></label>
-    `;
-  }
-
-  // demais: P / M / F
-  let radios = `
-    <label class="radio"><input type="radio" name="${name}" value="P"> <span>P</span></label>
-    <label class="radio"><input type="radio" name="${name}" value="M"> <span>M</span></label>
-    <label class="radio"><input type="radio" name="${name}" value="F"> <span>F</span></label>
-  `;
-
-  // dirigentes: PS
-  if (groupType === "dirigente") {
-    radios += `
-      <label class="radio radio-ps"><input type="radio" name="${name}" value="PS"> <span>PS</span></label>
-    `;
-  }
-
-  return radios;
-}
-
-function renderGrupo(divId, list, groupType) {
+function renderGrupo(divId, lista, groupType) {
   const div = $(divId);
   if (!div) return;
 
   div.innerHTML = "";
-
-  if (!list || list.length === 0) {
+  if (!lista || lista.length === 0) {
     div.innerHTML = `<div class="empty">Nenhum médium neste grupo.</div>`;
     return;
   }
 
-  // Próximo da vez (Mesa)
-  const useMesaRotation = groupType !== "carencia";
-  const nextMesaId = useMesaRotation ? getNextIdByLastId(list, rotaMap[groupType] || null) : null;
+  // regras: carência não entra na rotação (nem mesa)
+  const useRotacaoMesa = groupType !== "carencia";
+  const useRotacaoPS = groupType === "dirigente"; // só dirigentes têm PS
 
-  // Próximo da vez (Psicografia) apenas dirigentes
-  const usePsRotation = groupType === "dirigente";
-  const nextPsId = usePsRotation ? getNextIdByLastId(list, rotaMap.psicografia || null) : null;
+  const nextMesaId = useRotacaoMesa
+    ? getNextId(lista, rotacaoMap[getRotacaoKey(groupType, "mesa")] || rotacaoMap[groupType] || null)
+    : null;
 
-  list.forEach((m) => {
-    const perc = calcPercentFalta(m);
-    const faltaAlta = perc >= 30;
+  const nextPsId = useRotacaoPS
+    ? getNextId(lista, rotacaoMap[getRotacaoKey(groupType, "ps")] || null)
+    : null;
 
+  lista.forEach(m => {
     const card = document.createElement("div");
     card.className = "medium-card";
 
-    // borda amarela (mesa)
-    if (useMesaRotation && m.id === nextMesaId) card.classList.add("next-mesa");
+    const perc = calcPercFaltas(m);
+    const badgeAlta = perc >= 30 ? `<span class="badge-falta-alta">Falta alta</span>` : "";
+    const percTxt = `<span class="perc-faltas">${perc}% faltas</span>`;
 
-    // borda vermelha (psicografia - dirigente)
-    if (usePsRotation && m.id === nextPsId) card.classList.add("next-ps");
+    const isNextMesa = useRotacaoMesa && m.id === nextMesaId;
+    const isNextPs = useRotacaoPS && m.id === nextPsId;
 
-    const badgePerc = `
-      <span class="badge-perc ${faltaAlta ? "badge-alta" : ""}">${perc}% faltas</span>
-    `;
+    if (isNextMesa) card.classList.add("next-mesa");
+    if (isNextPs) card.classList.add("next-ps");
 
-    const tagMesa = useMesaRotation && m.id === nextMesaId ? `<span class="tag tag-mesa">PRÓXIMO (MESA)</span>` : "";
-    const tagPs = usePsRotation && m.id === nextPsId ? `<span class="tag tag-ps">PRÓXIMO (PS)</span>` : "";
+    // radios
+    let radios = "";
+    if (groupType === "carencia") {
+      radios = `
+        <label><input type="radio" name="${m.id}" value="P"> P</label>
+        <label><input type="radio" name="${m.id}" value="F"> F</label>
+      `;
+    } else if (groupType === "dirigente") {
+      radios = `
+        <label><input type="radio" name="${m.id}" value="P"> P</label>
+        <label><input type="radio" name="${m.id}" value="M"> M</label>
+        <label><input type="radio" name="${m.id}" value="F"> F</label>
+        <label><input type="radio" name="${m.id}" value="PS"> <span class="ps-label">PS</span></label>
+      `;
+    } else {
+      radios = `
+        <label><input type="radio" name="${m.id}" value="P"> P</label>
+        <label><input type="radio" name="${m.id}" value="M"> M</label>
+        <label><input type="radio" name="${m.id}" value="F"> F</label>
+      `;
+    }
+
+    const tagMesa = isNextMesa ? `<span class="tag-next tag-mesa">PRÓXIMO (MESA)</span>` : "";
+    const tagPs = isNextPs ? `<span class="tag-next tag-ps">PRÓXIMO (PS)</span>` : "";
 
     card.innerHTML = `
-      <div class="card-top">
-        <div class="name-line">
-          <span class="name">${escapeHtml(m.name || "")}</span>
-          ${badgePerc}
+      <div class="medium-header">
+        <div class="medium-name">
+          ${m.name} ${percTxt} ${badgeAlta}
         </div>
-        <div class="tags">
+        <div class="medium-tags">
           ${tagMesa}
           ${tagPs}
         </div>
       </div>
-
-      <div class="radios">
-        ${buildRadiosHTML(groupType, m.id)}
+      <div class="medium-radios">
+        ${radios}
       </div>
     `;
 
@@ -443,63 +303,28 @@ function renderGrupo(divId, list, groupType) {
   });
 }
 
-function escapeHtml(s) {
-  return String(s)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
 /* =========================
-   SALVAR CHAMADA
+   SALVAR CHAMADA + ATUALIZA ESTATÍSTICAS + ATUALIZA ROTAÇÃO
 ========================= */
-function getStatusForMediumId(id) {
-  const el = document.querySelector(`input[name="att_${id}"]:checked`);
-  return el ? el.value : null;
-}
-
 async function salvarChamada() {
   setText("resultadoSalvar", "");
-
+  const dataISO = $("dataChamada")?.value;
   const ok = await verificarData();
   if (!ok) {
     setText("resultadoSalvar", "Corrija a data antes de salvar.");
     return;
   }
 
-  const dateISO = getSelectedDateISO();
-  if (!dateISO) {
-    setText("resultadoSalvar", "Data inválida.");
-    return;
-  }
-
-  if (!mediumsCache || mediumsCache.length === 0) {
-    setText("resultadoSalvar", "Nenhum médium carregado.");
-    return;
-  }
-
   const registros = [];
-  const statsDelta = new Map(); // medium_id -> {pres, falta, mesa, ps}
-
   for (const m of mediumsCache) {
-    const status = getStatusForMediumId(m.id);
-    if (!status) continue;
-
+    if (m.active === false) continue;
+    const sel = document.querySelector(`input[name="${m.id}"]:checked`);
+    if (!sel) continue;
     registros.push({
       medium_id: m.id,
-      data: dateISO,
-      status: status,
+      data: dataISO,
+      status: sel.value
     });
-
-    if (!statsDelta.has(m.id)) statsDelta.set(m.id, { pres: 0, falta: 0, mesa: 0, ps: 0 });
-
-    const d = statsDelta.get(m.id);
-    if (status === "F") d.falta += 1;
-    else if (status === "M") d.mesa += 1;
-    else if (status === "PS") d.ps += 1;
-    else d.pres += 1; // P
   }
 
   if (registros.length === 0) {
@@ -507,314 +332,262 @@ async function salvarChamada() {
     return;
   }
 
-  disable("btnSalvar", true);
-
-  try {
-    // 1) Inserir chamadas
-    const { error: insertError } = await sb.from("chamadas").insert(registros);
-    if (insertError) {
-      console.error("Erro salvar chamadas:", insertError);
-      setText("resultadoSalvar", "❌ Erro ao salvar (verifique RLS/policies da tabela chamadas).");
-      disable("btnSalvar", false);
-      return;
-    }
-
-    // 2) Atualizar contadores em mediums (incrementando)
-    for (const [mediumId, d] of statsDelta.entries()) {
-      // buscar atual para somar
-      const { data: cur, error: selErr } = await sb
-        .from("mediums")
-        .select("id, faltas, presencas, mesa, psicografia")
-        .eq("id", mediumId)
-        .single();
-
-      if (selErr) {
-        console.warn("Falha ao buscar medium para update:", selErr);
-        continue;
-      }
-
-      const payload = {
-        faltas: Number(cur.faltas || 0) + d.falta,
-        presencas: Number(cur.presencas || 0) + d.pres,
-        mesa: Number(cur.mesa || 0) + d.mesa,
-        psicografia: Number(cur.psicografia || 0) + d.ps,
-        updated_at: new Date().toISOString(),
-      };
-
-      const { error: upErr } = await sb.from("mediums").update(payload).eq("id", mediumId);
-      if (upErr) console.warn("Falha update medium:", upErr);
-    }
-
-    // 3) Atualizar rotação (mesa e psicografia)
-    await atualizarRotacao(registros);
-
-    // 4) Recarregar e re-render
-    await carregarTudo();
-
-    setText("resultadoSalvar", "✅ Chamada registrada com sucesso!");
-  } catch (e) {
-    console.error("Exceção salvar:", e);
-    setText("resultadoSalvar", "❌ Erro inesperado ao salvar.");
-  } finally {
-    disable("btnSalvar", false);
+  // 1) insere chamadas
+  const ins = await sb.from("chamadas").insert(registros);
+  if (ins.error) {
+    console.error(ins.error);
+    setText("resultadoSalvar", "❌ Erro ao salvar: " + ins.error.message);
+    return;
   }
-}
 
-async function atualizarRotacao(registros) {
-  // regra:
-  // - mesa: se status == M => esse médium vira last_medium_id do grupo dele (exceto carencia)
-  // - psicografia: se status == PS => esse dirigente vira last_medium_id do group_type='psicografia'
-  // Observação: carência não entra em rotação.
+  // 2) atualiza contadores no mediums (faltas/presencas/mesa/psicografia)
+  const deltas = {}; // id -> { pres, falt, mesa, ps }
+  registros.forEach(r => {
+    if (!deltas[r.medium_id]) deltas[r.medium_id] = { pres: 0, falt: 0, mesa: 0, ps: 0 };
+    if (r.status === "F") deltas[r.medium_id].falt += 1;
+    else deltas[r.medium_id].pres += 1;
 
-  // Precisamos mapear medium_id -> group_type
-  const byId = new Map(mediumsCache.map((m) => [m.id, m.group_type]));
+    if (r.status === "M") deltas[r.medium_id].mesa += 1;
+    if (r.status === "PS") deltas[r.medium_id].ps += 1;
+  });
 
-  const mesaByGroup = {
-    dirigente: null,
-    incorporacao: null,
-    desenvolvimento: null,
-  };
-  let psDirigenteId = null;
+  for (const id of Object.keys(deltas)) {
+    const m = mediumsCache.find(x => x.id === id);
+    if (!m) continue;
 
-  for (const r of registros) {
-    const g = byId.get(r.medium_id);
-    if (!g) continue;
+    const up = {
+      presencas: Number(m.presencas || 0) + deltas[id].pres,
+      faltas: Number(m.faltas || 0) + deltas[id].falt,
+      mesa: Number(m.mesa || 0) + deltas[id].mesa,
+      psicografia: Number(m.psicografia || 0) + deltas[id].ps
+    };
 
-    if (r.status === "M") {
-      if (g !== "carencia" && mesaByGroup.hasOwnProperty(g)) {
-        mesaByGroup[g] = r.medium_id;
-      }
-    }
-
-    if (r.status === "PS") {
-      // psicografia somente para dirigente
-      if (g === "dirigente") psDirigenteId = r.medium_id;
+    const r = await sb.from("mediums").update(up).eq("id", id);
+    if (r.error) {
+      console.error("update mediums error", r.error);
+      setText("resultadoSalvar", "⚠️ Salvou a chamada, mas falhou ao atualizar estatísticas: " + r.error.message);
+      // continua mesmo assim
     }
   }
 
-  // upsert mesa por grupo
-  for (const g of Object.keys(mesaByGroup)) {
-    const mid = mesaByGroup[g];
-    if (!mid) continue;
+  // 3) atualiza rotação:
+  // - Para grupos com M: grava last_medium_id (mesa)
+  // - Para dirigente com PS: grava last_medium_id (ps)
+  // - Carência: não atualiza rotação por mesa
+  const byId = new Map(mediumsCache.map(m => [m.id, m]));
 
-    const { error } = await sb
-      .from("rotacao")
-      .upsert({ group_type: g, last_medium_id: mid, updated_at: new Date().toISOString() }, { onConflict: "group_type" });
+  // mesa:
+  const mesaRegs = registros.filter(r => r.status === "M");
+  for (const r of mesaRegs) {
+    const m = byId.get(r.medium_id);
+    if (!m) continue;
+    const gt = normalizeGroupType(m.group_type);
+    if (gt === "carencia") continue;
 
-    if (error) console.warn("Falha upsert rotacao mesa:", g, error);
+    const key = getRotacaoKey(gt, "mesa");
+    const u = await sb.from("rotacao").update({ last_medium_id: r.medium_id, updated_at: new Date().toISOString() }).eq("group_type", key);
+    if (u.error) console.error("update rotacao mesa error", u.error);
   }
 
-  // upsert psicografia
-  if (psDirigenteId) {
-    const { error } = await sb
-      .from("rotacao")
-      .upsert(
-        { group_type: "psicografia", last_medium_id: psDirigenteId, updated_at: new Date().toISOString() },
-        { onConflict: "group_type" }
-      );
-    if (error) console.warn("Falha upsert rotacao psicografia:", error);
+  // psicografia:
+  const psRegs = registros.filter(r => r.status === "PS");
+  for (const r of psRegs) {
+    const m = byId.get(r.medium_id);
+    if (!m) continue;
+    const gt = normalizeGroupType(m.group_type);
+    if (gt !== "dirigente") continue;
+
+    const key = getRotacaoKey(gt, "ps");
+    const u = await sb.from("rotacao").update({ last_medium_id: r.medium_id, updated_at: new Date().toISOString() }).eq("group_type", key);
+    if (u.error) console.error("update rotacao ps error", u.error);
   }
+
+  // 4) recarrega tudo
+  await carregarMediums();
+  await carregarRotacao();
+  await renderGruposChamada();
+
+  setText("resultadoSalvar", "✅ Chamada registrada com sucesso!");
 }
 
 /* =========================
-   ADMIN - PARTICIPANTES (CRUD)
+   ADMIN / PARTICIPANTES
 ========================= */
-let adminEditId = null;
-
 async function listarParticipantesAdmin() {
-  const box = $("listaParticipantesAdmin");
-  if (!box) return;
-
-  box.innerHTML = `<div class="empty">Carregando...</div>`;
+  // UI
+  setText("adminStatus", "Conectando...");
+  const listDiv = $("adminLista");
+  if (listDiv) listDiv.innerHTML = "";
 
   try {
-    const { data, error } = await sb.from("mediums").select("*").order("name", { ascending: true });
-    if (error) {
-      console.error("Erro listar participantes:", error);
-      box.innerHTML = `<div class="empty">Erro ao listar (verifique RLS).</div>`;
+    await carregarMediums(); // garante dados atualizados
+    setText("adminStatus", "");
+
+    const q = ($("adminBusca")?.value || "").trim().toLowerCase();
+
+    const lista = mediumsCache
+      .slice()
+      .sort((a, b) => (a.name || "").localeCompare(b.name || "", "pt-BR"))
+      .filter(m => !q || (m.name || "").toLowerCase().includes(q));
+
+    if (!listDiv) return;
+
+    listDiv.innerHTML = "";
+    if (lista.length === 0) {
+      listDiv.innerHTML = `<div class="empty">Nenhum participante encontrado.</div>`;
       return;
     }
 
-    const rows = data || [];
-    if (rows.length === 0) {
-      box.innerHTML = `<div class="empty">Nenhum participante cadastrado.</div>`;
-      return;
-    }
+    lista.forEach(m => {
+      const item = document.createElement("div");
+      item.className = "admin-item";
 
-    box.innerHTML = "";
-    rows.forEach((m) => {
-      const line = document.createElement("div");
-      line.className = "admin-row";
-
+      const gt = normalizeGroupType(m.group_type);
       const ativo = m.active !== false;
 
-      line.innerHTML = `
-        <div class="admin-col name">
-          <b>${escapeHtml(m.name || "")}</b>
-          <span class="admin-mini">${escapeHtml(m.group_type || "")}</span>
-        </div>
-        <div class="admin-col actions">
-          <button class="btn-mini" data-act="edit" data-id="${m.id}">Editar</button>
-          <button class="btn-mini" data-act="toggle" data-id="${m.id}">${ativo ? "Desativar" : "Ativar"}</button>
-          <button class="btn-mini danger" data-act="del" data-id="${m.id}">Excluir</button>
+      item.innerHTML = `
+        <div class="admin-item-row">
+          <div class="admin-item-name">
+            <strong>${m.name}</strong>
+            <span class="admin-pill">${gt}</span>
+            <span class="admin-pill ${ativo ? "on" : "off"}">${ativo ? "ATIVO" : "INATIVO"}</span>
+          </div>
+          <div class="admin-item-actions">
+            <button class="btn-mini" data-act="edit">Editar</button>
+            <button class="btn-mini" data-act="toggle">${ativo ? "Desativar" : "Ativar"}</button>
+            <button class="btn-mini danger" data-act="delete">Excluir</button>
+          </div>
         </div>
       `;
 
-      box.appendChild(line);
-    });
+      item.querySelector('[data-act="edit"]').addEventListener("click", async () => {
+        const novoNome = prompt("Nome:", m.name || "");
+        if (novoNome === null) return;
 
-    // bind
-    box.querySelectorAll("button[data-act]").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const act = btn.getAttribute("data-act");
-        const id = btn.getAttribute("data-id");
-        if (!id) return;
+        const novoGrupo = prompt("Grupo (dirigente/incorporacao/desenvolvimento/carencia):", gt);
+        if (novoGrupo === null) return;
 
-        if (act === "edit") await carregarParticipanteParaEditar(id);
-        if (act === "toggle") await toggleAtivoParticipante(id);
-        if (act === "del") await excluirParticipante(id);
+        const upd = await sb.from("mediums").update({
+          name: novoNome.trim(),
+          group_type: normalizeGroupType(novoGrupo),
+          updated_at: new Date().toISOString()
+        }).eq("id", m.id);
+
+        if (upd.error) {
+          alert("Erro ao editar: " + upd.error.message);
+          return;
+        }
+        await listarParticipantesAdmin();
+        await carregarRotacao();
+        await renderGruposChamada();
       });
+
+      item.querySelector('[data-act="toggle"]').addEventListener("click", async () => {
+        const upd = await sb.from("mediums").update({
+          active: !ativo,
+          updated_at: new Date().toISOString()
+        }).eq("id", m.id);
+
+        if (upd.error) {
+          alert("Erro ao ativar/desativar: " + upd.error.message);
+          return;
+        }
+        await listarParticipantesAdmin();
+        await renderGruposChamada();
+      });
+
+      item.querySelector('[data-act="delete"]').addEventListener("click", async () => {
+        if (!confirm(`Excluir "${m.name}"?`)) return;
+
+        const del = await sb.from("mediums").delete().eq("id", m.id);
+        if (del.error) {
+          alert("Erro ao excluir: " + del.error.message);
+          return;
+        }
+        await listarParticipantesAdmin();
+        await carregarRotacao();
+        await renderGruposChamada();
+      });
+
+      listDiv.appendChild(item);
     });
   } catch (e) {
-    console.error("Exceção listar participantes:", e);
-    box.innerHTML = `<div class="empty">Erro inesperado.</div>`;
+    console.error(e);
+    setText("adminStatus", "❌ Erro ao carregar participantes: " + (e?.message || e));
   }
 }
 
-function prepararNovoParticipanteAdmin() {
-  adminEditId = null;
-  setText("adminTituloForm", "Novo participante");
-  if ($("adminNome")) $("adminNome").value = "";
-  if ($("adminGrupo")) $("adminGrupo").value = "desenvolvimento";
-  if ($("adminAtivo")) $("adminAtivo").checked = true;
-  setText("adminMsg", "");
-}
-
-async function carregarParticipanteParaEditar(id) {
-  setText("adminMsg", "");
-
-  const { data, error } = await sb.from("mediums").select("*").eq("id", id).single();
-  if (error) {
-    console.error("Erro carregar participante:", error);
-    setText("adminMsg", "Erro ao carregar participante (RLS?).");
-    return;
-  }
-
-  adminEditId = id;
-  setText("adminTituloForm", "Editar participante");
-
-  if ($("adminNome")) $("adminNome").value = data.name || "";
-  if ($("adminGrupo")) $("adminGrupo").value = data.group_type || "desenvolvimento";
-  if ($("adminAtivo")) $("adminAtivo").checked = data.active !== false;
-}
-
-async function salvarParticipanteAdmin() {
-  setText("adminMsg", "");
-
-  const nome = $("adminNome")?.value?.trim() || "";
-  const grupo = $("adminGrupo")?.value?.trim() || "";
-  const ativo = $("adminAtivo") ? $("adminAtivo").checked : true;
+async function adicionarParticipante() {
+  const nome = ($("novoNome")?.value || "").trim();
+  const grupo = normalizeGroupType($("novoGrupo")?.value || "dirigente");
 
   if (!nome) {
-    setText("adminMsg", "Informe o nome.");
-    return;
-  }
-  if (!grupo || !GROUPS.includes(grupo)) {
-    setText("adminMsg", "Grupo inválido.");
+    alert("Informe o nome.");
     return;
   }
 
-  const payload = {
+  const ins = await sb.from("mediums").insert([{
     name: nome,
     group_type: grupo,
-    active: ativo,
-    updated_at: new Date().toISOString(),
-  };
+    faltas: 0,
+    presencas: 0,
+    mesa: 0,
+    psicografia: 0,
+    carencia_total: 0,
+    carencia_atual: 0,
+    primeira_incorporacao: false,
+    active: true
+  }]);
 
-  try {
-    if (!adminEditId) {
-      // criar
-      payload.faltas = 0;
-      payload.presencas = 0;
-      payload.mesa = 0;
-      payload.psicografia = 0;
-      payload.carencia_total = 0;
-      payload.carencia_atual = 0;
-      payload.primeira_incorporacao = false;
-      payload.inserted_at = new Date().toISOString();
-
-      const { error } = await sb.from("mediums").insert(payload);
-      if (error) {
-        console.error("Erro inserir participante:", error);
-        setText("adminMsg", "Erro ao inserir (verifique RLS).");
-        return;
-      }
-      setText("adminMsg", "✅ Participante criado.");
-    } else {
-      // editar
-      const { error } = await sb.from("mediums").update(payload).eq("id", adminEditId);
-      if (error) {
-        console.error("Erro atualizar participante:", error);
-        setText("adminMsg", "Erro ao atualizar (verifique RLS).");
-        return;
-      }
-      setText("adminMsg", "✅ Alterações salvas.");
-    }
-
-    await listarParticipantesAdmin();
-    await carregarTudo(); // reflete na chamada
-  } catch (e) {
-    console.error("Exceção salvar participante:", e);
-    setText("adminMsg", "Erro inesperado ao salvar.");
-  }
-}
-
-async function toggleAtivoParticipante(id) {
-  setText("adminMsg", "");
-
-  const { data, error } = await sb.from("mediums").select("id, active").eq("id", id).single();
-  if (error) {
-    console.error("Erro toggle:", error);
-    setText("adminMsg", "Erro ao alterar ativo (RLS?).");
+  if (ins.error) {
+    alert("Erro ao adicionar: " + ins.error.message);
     return;
   }
 
-  const novo = !(data.active !== false);
-
-  const { error: upErr } = await sb
-    .from("mediums")
-    .update({ active: novo, updated_at: new Date().toISOString() })
-    .eq("id", id);
-
-  if (upErr) {
-    console.error("Erro update ativo:", upErr);
-    setText("adminMsg", "Erro ao salvar (RLS?).");
-    return;
-  }
-
+  $("novoNome").value = "";
   await listarParticipantesAdmin();
-  await carregarTudo();
-}
-
-async function excluirParticipante(id) {
-  setText("adminMsg", "");
-
-  // cuidado: se tiver FK em chamadas, delete pode falhar. Nesse caso, desative ao invés de excluir.
-  const ok = confirm("Tem certeza que deseja excluir? Se houver chamadas registradas, pode falhar.");
-  if (!ok) return;
-
-  const { error } = await sb.from("mediums").delete().eq("id", id);
-  if (error) {
-    console.error("Erro delete participante:", error);
-    setText("adminMsg", "Não foi possível excluir (provável FK). Sugestão: use Desativar.");
-    return;
-  }
-
-  await listarParticipantesAdmin();
-  await carregarTudo();
+  await renderGruposChamada();
 }
 
 /* =========================
-   START
+   BOOT
 ========================= */
-document.addEventListener("DOMContentLoaded", initApp);
+async function bootApp() {
+  try {
+    await carregarMediums();
+    await carregarRotacao();
+    await renderGruposChamada();
+  } catch (e) {
+    console.error(e);
+    setText("resultadoSalvar", "❌ Erro ao carregar: " + (e?.message || e));
+  }
+}
+
+window.addEventListener("DOMContentLoaded", async () => {
+  await initAuth();
+
+  // se já tem sessão, entra direto
+  if (session) {
+    show("loginCard", false);
+    show("app", true);
+    const dc = $("dataChamada");
+    if (dc && !dc.value) dc.value = todayISO();
+    await bootApp();
+  } else {
+    show("app", false);
+    show("loginCard", true);
+  }
+
+  // binds (se existirem no seu index.html)
+  $("btnLogin")?.addEventListener("click", login);
+  $("btnLogout")?.addEventListener("click", logout);
+
+  $("btnVerificar")?.addEventListener("click", verificarData);
+  $("btnSalvar")?.addEventListener("click", salvarChamada);
+
+  $("tabChamada")?.addEventListener("click", () => mostrarAba("chamada"));
+  $("tabAdmin")?.addEventListener("click", () => mostrarAba("admin"));
+
+  $("btnAddParticipante")?.addEventListener("click", adicionarParticipante);
+  $("adminBusca")?.addEventListener("input", listarParticipantesAdmin);
+});
