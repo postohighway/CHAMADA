@@ -1,220 +1,62 @@
-<!doctype html>
-<html lang="pt-BR">
+<!DOCTYPE html>
+<html lang="pt-br">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Chamada Núcleo</title>
-  <link rel="stylesheet" href="style.css" />
-  <!-- Supabase JS (CDN) -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <!-- CSS -->
+  <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
+
   <!-- LOGIN -->
-  <div id="loginCard" class="page">
-    <div class="card login">
-      <h1>Chamada Núcleo</h1>
-      <p class="muted">Acesso restrito aos dirigentes</p>
+  <div id="loginCard" class="login-card">
+    <h1>Chamada Núcleo</h1>
 
-      <label class="label">Email</label>
-      <input id="email" class="input" type="email" placeholder="seu@email.com" autocomplete="username" />
+    <div id="loginError" class="error"></div>
 
-      <label class="label">Senha</label>
-      <input id="senha" class="input" type="password" placeholder="••••••••" autocomplete="current-password" />
+    <input type="email" id="email" placeholder="Email" />
+    <input type="password" id="senha" placeholder="Senha" />
 
-      <button class="btn primary" id="btnEntrar">Entrar</button>
-      <div id="loginError" class="error"></div>
-    </div>
+    <button onclick="login()">Entrar</button>
   </div>
 
   <!-- APP -->
-  <div id="app" class="page hidden">
-    <header class="topbar">
-      <div class="topbar-left">
-        <h2>Chamada de Médiuns</h2>
-      </div>
-      <div class="topbar-right">
-        <button class="btn ghost" id="btnSair">Sair</button>
-      </div>
+  <div id="app" style="display:none">
+    <header>
+      <h2>Chamada de Médiuns</h2>
+      <button onclick="logout()">Sair</button>
     </header>
 
-    <!-- Tabs -->
-    <div class="tabs">
-      <button id="tabChamada" class="tab active">Chamada</button>
-      <button id="tabAdmin" class="tab">Participantes</button>
-    </div>
+    <main>
+      <label>Data da chamada:</label>
+      <input type="date" id="dataChamada" />
+      <button onclick="verificarData()">Verificar data</button>
+      <div id="avisoData"></div>
 
-    <!-- ABA CHAMADA -->
-    <section id="abaChamada" class="container">
-      <div class="panel">
-        <div class="row">
-          <div class="col">
-            <label class="label">Data da Chamada:</label>
-            <input id="dataChamada" class="input" type="date" />
-          </div>
-          <div class="col">
-            <button class="btn" id="btnVerificar">Verificar data</button>
-          </div>
-        </div>
+      <h3>Dirigentes</h3>
+      <div id="listaDirigentes"></div>
 
-        <div id="avisoData" class="notice"></div>
+      <h3>Médiuns de Incorporação</h3>
+      <div id="listaIncorporacao"></div>
 
-        <div class="row">
-          <div class="col">
-            <button class="btn primary" id="btnSalvar" disabled>Salvar chamada</button>
-          </div>
-          <div class="col">
-            <div id="resultadoSalvar" class="notice"></div>
-          </div>
-        </div>
-      </div>
+      <h3>Médiuns em Desenvolvimento</h3>
+      <div id="listaDesenvolvimento"></div>
 
-      <!-- Dirigentes -->
-      <div class="section">
-        <div class="section-head">
-          <h3>Dirigentes</h3>
-          <div class="legend">
-            <span class="pill">P = Presente</span>
-            <span class="pill">M = Mesa</span>
-            <span class="pill">F = Falta</span>
-            <span class="pill red">PS = Psicografia</span>
-          </div>
-        </div>
-        <div id="listaDirigentes" class="list"></div>
-      </div>
+      <h3>Médiuns em Carência</h3>
+      <div id="listaCarencia"></div>
 
-      <div class="divider"></div>
-
-      <!-- Incorporação -->
-      <div class="section">
-        <div class="section-head">
-          <h3>Médiuns de Incorporação</h3>
-          <div class="legend">
-            <span class="pill">P = Presente</span>
-            <span class="pill">M = Mesa</span>
-            <span class="pill">F = Falta</span>
-            <span class="pill info" id="countIncorporacao"></span>
-          </div>
-        </div>
-        <div id="listaIncorporacao" class="list"></div>
-      </div>
-
-      <div class="divider"></div>
-
-      <!-- Desenvolvimento -->
-      <div class="section">
-        <div class="section-head">
-          <h3>Médiuns em Desenvolvimento</h3>
-          <div class="legend">
-            <span class="pill">P = Presente</span>
-            <span class="pill">M = Mesa</span>
-            <span class="pill">F = Falta</span>
-            <span class="pill info" id="countDesenvolvimento"></span>
-          </div>
-        </div>
-        <div id="listaDesenvolvimento" class="list"></div>
-      </div>
-
-      <div class="divider"></div>
-
-      <!-- Carência -->
-      <div class="section">
-        <div class="section-head">
-          <h3>Médiuns em Carência</h3>
-          <div class="legend">
-            <span class="pill">P = Presente</span>
-            <span class="pill">F = Falta</span>
-            <span class="pill warn">Carência não senta na mesa</span>
-          </div>
-        </div>
-        <div id="listaCarencia" class="list"></div>
-      </div>
-    </section>
-
-    <!-- ABA ADMIN -->
-    <section id="abaAdmin" class="container hidden">
-      <div class="panel">
-        <h3>Participantes</h3>
-        <p class="muted">Adicionar, editar, ativar/inativar e mover entre grupos.</p>
-
-        <div class="row wrap">
-          <input id="adminBusca" class="input" placeholder="Buscar por nome..." />
-          <select id="adminFiltroGrupo" class="input">
-            <option value="">Todos os grupos</option>
-            <option value="dirigente">Dirigentes</option>
-            <option value="incorporacao">Incorporação</option>
-            <option value="desenvolvimento">Desenvolvimento</option>
-            <option value="carencia">Carência</option>
-          </select>
-          <select id="adminFiltroAtivo" class="input">
-            <option value="ativos">Ativos</option>
-            <option value="todos">Todos</option>
-            <option value="inativos">Inativos</option>
-          </select>
-          <button class="btn primary" id="btnNovo">Novo participante</button>
-        </div>
-
-        <div id="adminLista" class="admin-list"></div>
-        <div id="adminMsg" class="notice"></div>
-      </div>
-
-      <!-- Modal -->
-      <div id="modal" class="modal hidden">
-        <div class="modal-card">
-          <div class="modal-head">
-            <h3 id="modalTitle">Editar</h3>
-            <button class="btn ghost" id="btnFecharModal">Fechar</button>
-          </div>
-
-          <div class="grid">
-            <div>
-              <label class="label">Nome</label>
-              <input id="mName" class="input" />
-            </div>
-
-            <div>
-              <label class="label">Grupo</label>
-              <select id="mGroup" class="input">
-                <option value="dirigente">Dirigente</option>
-                <option value="incorporacao">Incorporação</option>
-                <option value="desenvolvimento">Desenvolvimento</option>
-                <option value="carencia">Carência</option>
-              </select>
-            </div>
-
-            <div class="row wrap">
-              <label class="check">
-                <input id="mActive" type="checkbox" />
-                Ativo
-              </label>
-              <label class="check">
-                <input id="mPrimeira" type="checkbox" />
-                Primeira incorporação (marcação)
-              </label>
-            </div>
-
-            <div>
-              <label class="label">Carência total (sessões)</label>
-              <input id="mCarenciaTotal" class="input" type="number" min="0" />
-            </div>
-
-            <div>
-              <label class="label">Carência atual (sessões feitas)</label>
-              <input id="mCarenciaAtual" class="input" type="number" min="0" />
-            </div>
-          </div>
-
-          <div class="modal-actions">
-            <button class="btn primary" id="btnSalvarParticipante">Salvar</button>
-            <button class="btn danger" id="btnInativarParticipante">Inativar</button>
-          </div>
-
-          <div id="modalMsg" class="notice"></div>
-        </div>
-      </div>
-    </section>
+      <button onclick="salvarChamada()">Salvar chamada</button>
+      <div id="resultadoSalvar"></div>
+    </main>
   </div>
 
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="./app.js"></script>
+  <!-- SUPABASE -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+  <!-- SEU JS -->
+  <script src="./app.js"></script>
+
 </body>
 </html>
