@@ -1,119 +1,131 @@
 <!doctype html>
-<html lang="pt-br">
+<html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Chamada Núcleo</title>
-  <link rel="stylesheet" href="style.css" />
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script defer src="app.js"></script>
+  <title>Chamada de Médiuns</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial;margin:0;background:#f6f7fb}
+    header{padding:14px 16px;background:#111827;color:#fff;position:sticky;top:0;z-index:5}
+    .wrap{max-width:980px;margin:0 auto;padding:14px 12px}
+    .tabs{display:flex;gap:8px;margin:10px 0 12px}
+    .tab{padding:10px 12px;border-radius:10px;border:1px solid #d1d5db;background:#fff;cursor:pointer}
+    .tab.active{background:#111827;color:#fff;border-color:#111827}
+    .card{background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:12px;margin:10px 0}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    input,select,button{font-size:16px}
+    input,select{padding:10px;border:1px solid #d1d5db;border-radius:10px}
+    button{padding:10px 12px;border-radius:10px;border:1px solid #111827;background:#111827;color:#fff;cursor:pointer}
+    button.secondary{background:#fff;color:#111827}
+    .muted{color:#6b7280;font-size:14px}
+    .error{color:#b91c1c;font-weight:700}
+    .ok{color:#065f46;font-weight:700}
+
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    @media(max-width:760px){.grid2{grid-template-columns:1fr}}
+
+    .section-title{font-weight:800;margin:2px 0 10px}
+    .empty{padding:10px;color:#6b7280}
+    .medium-card{border:1px solid #e5e7eb;border-radius:12px;padding:10px;margin:8px 0;background:#fff}
+    .medium-header{display:flex;justify-content:space-between;gap:10px;align-items:center}
+    .medium-name{font-weight:800}
+    .right{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+    .badge-perc{padding:4px 8px;border-radius:999px;background:#f3f4f6;border:1px solid #e5e7eb;font-weight:800}
+    .badge-falta-alta{background:#fee2e2;border-color:#fecaca}
+    .tag{padding:4px 8px;border-radius:999px;border:1px solid #e5e7eb;font-weight:800}
+    .tag-mesa{background:#fff7cc;border-color:#f1df7a}
+    .tag-ps{background:#ffe4e6;border-color:#fecdd3}
+    .status-radios{display:flex;gap:14px;margin-top:10px;flex-wrap:wrap}
+    .status-radios label{display:flex;align-items:center;gap:6px}
+    .radio-ps span{color:#b91c1c;font-weight:900}
+
+    .medium-next{outline:3px solid #facc15}        /* amarelo */
+    .medium-next-ps{outline:3px solid #ef4444}     /* vermelho */
+
+    /* ADMIN */
+    #adminLoading{padding:10px}
+    .admin-row{display:flex;justify-content:space-between;gap:10px;align-items:center;border:1px solid #e5e7eb;border-radius:12px;padding:10px;margin:8px 0;background:#fff}
+    .chip{padding:3px 8px;border-radius:999px;border:1px solid #e5e7eb;background:#f9fafb;font-weight:800;font-size:13px}
+    .admin-actions{display:flex;gap:8px;flex-wrap:wrap}
+    .btn-small{padding:8px 10px;border-radius:10px;border:1px solid #111827;background:#111827;color:#fff}
+    .btn-danger{border-color:#b91c1c;background:#b91c1c}
+  </style>
 </head>
-
 <body>
-  <div class="shell">
-    <header class="topbar">
-      <div class="brand">
-        <div class="title">Chamada de Médiuns</div>
-        <div class="subtitle">Controle de presença — terça-feira</div>
+  <header>
+    <div class="wrap">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap">
+        <div style="font-weight:900">Chamada de Médiuns</div>
+        <div id="statusConexao" class="muted">Carregando…</div>
       </div>
+    </div>
+  </header>
 
-      <div class="top-actions">
-        <button class="pill active" id="tabChamada" onclick="mostrarAba('chamada')">Chamada</button>
-        <button class="pill" id="tabAdmin" onclick="mostrarAba('admin')">Participantes</button>
-      </div>
-    </header>
+  <main class="wrap">
+    <div class="tabs">
+      <button id="tabChamada" class="tab active" type="button">Chamada</button>
+      <button id="tabAdmin" class="tab" type="button">Participantes</button>
+    </div>
 
-    <main class="card">
-      <!-- ABA CHAMADA -->
-      <section id="abaChamada">
+    <!-- ABA CHAMADA -->
+    <section id="abaChamada">
+      <div class="card">
         <div class="row">
-          <div class="field">
-            <label for="dataChamada">Data da Chamada</label>
+          <div>
+            <div class="muted">Data da reunião (terça 18:30)</div>
             <input id="dataChamada" type="date" />
           </div>
-
-          <button class="btn" id="btnVerificar" onclick="verificarData()">Verificar data</button>
+          <button id="btnVerificarData" type="button" class="secondary">Verificar data</button>
+          <button id="btnSalvarChamada" type="button">Salvar chamada</button>
         </div>
+        <div id="avisoData" class="muted" style="margin-top:8px"></div>
+        <div id="resultadoSalvar" style="margin-top:8px"></div>
+        <div id="bannerMsg" class="muted" style="margin-top:8px"></div>
+      </div>
 
-        <div id="avisoData" class="notice"></div>
-
-        <div class="row row-actions">
-          <button class="btn primary" id="btnSalvar" onclick="salvarChamada()">Salvar chamada</button>
-          <div id="resultadoSalvar" class="result"></div>
+      <div class="grid2">
+        <div class="card">
+          <div class="section-title">Dirigentes</div>
+          <div id="listaDirigentes"></div>
         </div>
-
-        <div class="legend">
-          <span class="dot next"></span> Próximo da vez (Mesa)
-          <span class="dot ps"></span> Próximo da vez (Psicografia)
-          <span class="dot late"></span> Falta alta (≥ 30%)
+        <div class="card">
+          <div class="section-title">Incorporação</div>
+          <div id="listaIncorporacao"></div>
         </div>
-
-        <h2>Dirigentes</h2>
-        <div id="listaDirigentes" class="list"></div>
-
-        <h2>Médiuns de Incorporação</h2>
-        <div id="listaIncorporacao" class="list"></div>
-
-        <h2>Médiuns em Desenvolvimento</h2>
-        <div id="listaDesenvolvimento" class="list"></div>
-
-        <h2>Médiuns em Carência</h2>
-        <div class="hint">Carência não vai à mesa (somente P/F).</div>
-        <div id="listaCarencia" class="list"></div>
-      </section>
-
-      <!-- ABA ADMIN -->
-      <section id="abaAdmin" style="display:none;">
-        <div class="admin-head">
-          <div>
-            <h2 style="margin:0;">Participantes</h2>
-            <div class="hint">Aqui você inclui/edita/exclui e ativa/desativa participantes (p/ iPhone funciona normal).</div>
-          </div>
+        <div class="card">
+          <div class="section-title">Desenvolvimento</div>
+          <div id="listaDesenvolvimento"></div>
         </div>
+        <div class="card">
+          <div class="section-title">Carência (não senta na mesa)</div>
+          <div id="listaCarencia"></div>
+        </div>
+      </div>
+    </section>
 
+    <!-- ABA ADMIN / PARTICIPANTES -->
+    <section id="abaAdmin" style="display:none">
+      <div class="card">
         <div class="row">
-          <div class="field grow">
-            <label for="busca">Buscar</label>
-            <input id="busca" placeholder="Digite parte do nome..." oninput="renderListaAdmin()" />
-          </div>
+          <input id="adminBusca" placeholder="Buscar participante…" />
+          <input id="adminNome" placeholder="Nome do novo participante" />
+          <select id="adminGrupo">
+            <option value="dirigente">dirigente</option>
+            <option value="incorporacao">incorporacao</option>
+            <option value="desenvolvimento">desenvolvimento</option>
+            <option value="carencia">carencia</option>
+          </select>
+          <button id="btnAdicionarParticipante" type="button">Adicionar</button>
         </div>
+        <div id="adminLoading" class="muted">Conectando…</div>
+      </div>
 
-        <div class="admin-grid">
-          <div class="admin-card">
-            <h3>Novo participante</h3>
+      <div id="adminLista"></div>
+    </section>
+  </main>
 
-            <div class="field">
-              <label for="novoNome">Nome</label>
-              <input id="novoNome" placeholder="Ex.: Marcelo Loureiro" />
-            </div>
-
-            <div class="field">
-              <label for="novoGrupo">Grupo</label>
-              <select id="novoGrupo">
-                <option value="dirigente">Dirigente</option>
-                <option value="incorporacao">Incorporação</option>
-                <option value="desenvolvimento">Desenvolvimento</option>
-                <option value="carencia">Carência</option>
-              </select>
-            </div>
-
-            <div class="row">
-              <button class="btn primary" onclick="criarParticipante()">Adicionar</button>
-              <div id="adminMsg" class="result"></div>
-            </div>
-          </div>
-
-          <div class="admin-card">
-            <h3>Lista</h3>
-            <div id="listaAdmin" class="admin-list"></div>
-          </div>
-        </div>
-      </section>
-    </main>
-
-    <footer class="foot">
-      <span id="statusRodape">Conectando…</span>
-    </footer>
-  </div>
+  <!-- ORDEM OBRIGATÓRIA: supabase-js ANTES do app.js -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="./app.js?v=fix1"></script>
 </body>
 </html>
