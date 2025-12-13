@@ -1,552 +1,219 @@
-// =====================
-// CONFIGURAÇÃO SUPABASE
-// =====================
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Chamada Núcleo</title>
+  <link rel="stylesheet" href="style.css" />
+  <!-- Supabase JS (CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <!-- LOGIN -->
+  <div id="loginCard" class="page">
+    <div class="card login">
+      <h1>Chamada Núcleo</h1>
+      <p class="muted">Acesso restrito aos dirigentes</p>
 
-const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co";
-const SUPABASE_ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5vdXp6eXJldnlrZG1ucWlmamp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUzOTYzMDIsImV4cCI6MjA4MDk3MjMwMn0.s2OzeSXe7CrKDNl6fXkTcMj_Vgitod0l0h0BiJA79nc";
+      <label class="label">Email</label>
+      <input id="email" class="input" type="email" placeholder="seu@email.com" autocomplete="username" />
 
-const { createClient } = window.supabase;
-const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+      <label class="label">Senha</label>
+      <input id="senha" class="input" type="password" placeholder="••••••••" autocomplete="current-password" />
 
-// cache em memória
-let mediumsCache = [];
-let rotaMap = {}; // { group_type: last_medium_id }
+      <button class="btn primary" id="btnEntrar">Entrar</button>
+      <div id="loginError" class="error"></div>
+    </div>
+  </div>
 
-// =====================
-// LOGIN / LOGOUT
-// =====================
-
-async function login() {
-  const email = document.getElementById("email").value.trim();
-  const senha = document.getElementById("senha").value.trim();
-  const erroBox = document.getElementById("loginError");
-
-  erroBox.textContent = "";
-
-  if (!email || !senha) {
-    erroBox.textContent = "Preencha email e senha.";
-    return;
-  }
-
-  try {
-    const { error } = await sb.auth.signInWithPassword({
-      email,
-      password: senha,
-    });
-
-    if (error) {
-      console.error("Erro login:", error);
-      erroBox.textContent = "Erro no login: " + error.message;
-      return;
-    }
-
-    document.getElementById("loginCard").style.display = "none";
-    document.getElementById("app").style.display = "block";
-
-    const hoje = new Date().toISOString().slice(0, 10);
-    document.getElementById("dataChamada").value = hoje;
-
-    await carregarMediums();
-  } catch (e) {
-    console.error("Exceção login:", e);
-    erroBox.textContent = "Erro inesperado ao tentar entrar.";
-  }
-}
-
-async function logout() {
-  await sb.auth.signOut();
-  document.getElementById("app").style.display = "none";
-  document.getElementById("loginCard").style.display = "block";
-}
-
-// =====================
-// TROCA DE ABA
-// =====================
-
-function mostrarAba(qual) {
-  const abaChamada = document.getElementById("abaChamada");
-  const abaAdmin = document.getElementById("abaAdmin");
-  const tabChamada = document.getElementById("tabChamada");
-  const tabAdmin = document.getElementById("tabAdmin");
-
-  if (qual === "chamada") {
-    abaChamada.style.display = "block";
-    abaAdmin.style.display = "none";
-    tabChamada.classList.add("active");
-    tabAdmin.classList.remove("active");
-    renderGruposChamada();
-  } else {
-    abaChamada.style.display = "none";
-    abaAdmin.style.display = "block";
-    tabChamada.classList.remove("active");
-    tabAdmin.classList.add("active");
-    listarParticipantesAdmin();
-  }
-}
-
-// =====================
-// VERIFICAR DATA
-// =====================
-
-async function verificarData() {
-  const data = document.getElementById("dataChamada").value;
-  const aviso = document.getElementById("avisoData");
-
-  aviso.textContent = "";
-
-  if (!data) {
-    aviso.textContent = "Selecione uma data.";
-    return false;
-  }
-
-  // getDay: 0 = domingo, 1 = segunda, 2 = terça ...
-  const diaSemana = new Date(data + "T03:00:00").getDay();
-
-  let feriados = [];
-  try {
-    const { data: feriadosData, error } = await sb
-      .from("feriados")
-      .select("*")
-      .eq("data", data);
-
-    if (!error && feriadosData) feriados = feriadosData;
-  } catch (e) {
-    console.error("Erro feriados:", e);
-  }
-
-  if (diaSemana !== 2) {
-    aviso.textContent = "❌ Chamada só pode ser feita em TERÇA-FEIRA.";
-    return false;
-  }
-
-  if (feriados.length > 0) {
-    aviso.textContent = "❌ Hoje é feriado! Chamada não permitida.";
-    return false;
-  }
-
-  aviso.textContent = "✔ Data válida, pode registrar presença.";
-  return true;
-}
-
-// =====================
-// CARREGAR MÉDIUNS + ROTAÇÃO
-// =====================
-
-async function carregarMediums() {
-  const { data, error } = await sb
-    .from("mediums")
-    .select("*")
-    .order("name", { ascending: true });
-
-  if (error) {
-    console.error("Erro carregar médiuns:", error);
-    alert("Erro ao carregar lista de médiuns.");
-    return;
-  }
-
-  mediumsCache = data || [];
-  await carregarRotacao();
-  renderGruposChamada();
-}
-
-async function carregarRotacao() {
-  rotaMap = {};
-  const { data, error } = await sb.from("rotacao").select("*");
-  if (error) {
-    console.error("Erro carregar rotação:", error);
-    return;
-  }
-  (data || []).forEach((r) => {
-    rotaMap[r.group_type] = r.last_medium_id;
-  });
-}
-
-function renderGruposChamada() {
-  const ativos = mediumsCache.filter((m) => m.active);
-
-  const dirigentes = ativos.filter((x) => x.group_type === "dirigente");
-  const incorporacao = ativos.filter((x) => x.group_type === "incorporacao");
-  const desenvolvimento = ativos.filter(
-    (x) => x.group_type === "desenvolvimento"
-  );
-  const carencia = ativos.filter((x) => x.group_type === "carencia");
-
-  renderGrupo("listaDirigentes", dirigentes, "dirigente");
-  renderGrupo("listaIncorporacao", incorporacao, "incorporacao");
-  renderGrupo("listaDesenvolvimento", desenvolvimento, "desenvolvimento");
-  renderGrupo("listaCarencia", carencia, "carencia");
-}
-
-// devolve o PRÓXIMO da fila baseado no último
-function getNextMediumId(lista, lastId) {
-  if (!lista || lista.length === 0) return null;
-  if (!lastId) return lista[0].id;
-  const idx = lista.findIndex((m) => m.id === lastId);
-  if (idx === -1 || idx === lista.length - 1) return lista[0].id;
-  return lista[idx + 1].id;
-}
-
-// cartões por grupo + destaque do próximo + % faltas
-function renderGrupo(divId, lista, groupType) {
-  const div = document.getElementById(divId);
-  div.innerHTML = "";
-
-  if (!lista || lista.length === 0) {
-    div.innerHTML = "<i>Nenhum médium neste grupo.</i>";
-    return;
-  }
-
-  // em carência NÃO há mesa nem rotação
-  const useRotation = groupType !== "carencia";
-  const nextId = useRotation
-    ? getNextMediumId(lista, rotaMap[groupType] || null)
-    : null;
-
-  lista.forEach((m) => {
-    const card = document.createElement("div");
-    card.className = "medium-card";
-
-    if (useRotation && m.id === nextId) {
-      card.classList.add("medium-next");
-    }
-
-    // cálculo % de falta
-    const faltas = m.faltas || 0;
-    const presencas = m.presencas || 0;
-    const totalChamadas = faltas + presencas;
-    let percHtml = "";
-    if (totalChamadas > 0) {
-      const perc = Math.round((faltas * 100) / totalChamadas);
-      const classeAlta = perc >= 30 ? "badge-falta-alta" : "";
-      percHtml = `<span class="badge-falta ${classeAlta}">${perc}% falta</span>`;
-    }
-
-    let radios = "";
-
-    if (groupType === "carencia") {
-      // Carência: só Presente / Falta
-      radios = `
-        <label><input type="radio" name="${m.id}" value="P"> P</label>
-        <label><input type="radio" name="${m.id}" value="F"> F</label>
-      `;
-    } else {
-      // Demais grupos: P / M / F
-      radios = `
-        <label><input type="radio" name="${m.id}" value="P"> P</label>
-        <label><input type="radio" name="${m.id}" value="M"> M</label>
-        <label><input type="radio" name="${m.id}" value="F"> F</label>
-      `;
-
-      // Dirigentes: também PS, em vermelho para o "próximo da vez"
-      if (groupType === "dirigente") {
-        const psClass = useRotation && m.id === nextId ? "ps-next" : "";
-        radios += `
-          <label class="${psClass}">
-            <input type="radio" name="${m.id}" value="PS"> PS
-          </label>
-        `;
-      }
-    }
-
-    const tagNext =
-      useRotation && m.id === nextId
-        ? `<span class="tag-next">PRÓXIMO DA VEZ</span>`
-        : "";
-
-    card.innerHTML = `
-      <div class="medium-name">
-        <span class="medium-name-text">${m.name}</span>
-        ${percHtml}
-        ${tagNext}
+  <!-- APP -->
+  <div id="app" class="page hidden">
+    <header class="topbar">
+      <div class="topbar-left">
+        <h2>Chamada de Médiuns</h2>
       </div>
-      <div class="medium-options">
-        ${radios}
+      <div class="topbar-right">
+        <button class="btn ghost" id="btnSair">Sair</button>
       </div>
-    `;
+    </header>
 
-    div.appendChild(card);
-  });
-}
+    <!-- Tabs -->
+    <div class="tabs">
+      <button id="tabChamada" class="tab active">Chamada</button>
+      <button id="tabAdmin" class="tab">Participantes</button>
+    </div>
 
-// =====================
-// SALVAR CHAMADA + ATUALIZAR ROTAÇÃO + ESTATÍSTICAS
-// =====================
+    <!-- ABA CHAMADA -->
+    <section id="abaChamada" class="container">
+      <div class="panel">
+        <div class="row">
+          <div class="col">
+            <label class="label">Data da Chamada:</label>
+            <input id="dataChamada" class="input" type="date" />
+          </div>
+          <div class="col">
+            <button class="btn" id="btnVerificar">Verificar data</button>
+          </div>
+        </div>
 
-async function salvarChamada() {
-  const data = document.getElementById("dataChamada").value;
-  const res = document.getElementById("resultadoSalvar");
-  res.textContent = "";
+        <div id="avisoData" class="notice"></div>
 
-  const ok = await verificarData();
-  if (!ok) {
-    res.textContent = "Corrija a data antes de salvar.";
-    return;
-  }
+        <div class="row">
+          <div class="col">
+            <button class="btn primary" id="btnSalvar" disabled>Salvar chamada</button>
+          </div>
+          <div class="col">
+            <div id="resultadoSalvar" class="notice"></div>
+          </div>
+        </div>
+      </div>
 
-  const registros = [];
+      <!-- Dirigentes -->
+      <div class="section">
+        <div class="section-head">
+          <h3>Dirigentes</h3>
+          <div class="legend">
+            <span class="pill">P = Presente</span>
+            <span class="pill">M = Mesa</span>
+            <span class="pill">F = Falta</span>
+            <span class="pill red">PS = Psicografia</span>
+          </div>
+        </div>
+        <div id="listaDirigentes" class="list"></div>
+      </div>
 
-  mediumsCache.forEach((m) => {
-    if (!m.active) return;
-    const statusEl = document.querySelector(`input[name="${m.id}"]:checked`);
-    if (!statusEl) return;
+      <div class="divider"></div>
 
-    registros.push({
-      medium_id: m.id,
-      data: data,
-      status: statusEl.value,
-    });
-  });
+      <!-- Incorporação -->
+      <div class="section">
+        <div class="section-head">
+          <h3>Médiuns de Incorporação</h3>
+          <div class="legend">
+            <span class="pill">P = Presente</span>
+            <span class="pill">M = Mesa</span>
+            <span class="pill">F = Falta</span>
+            <span class="pill info" id="countIncorporacao"></span>
+          </div>
+        </div>
+        <div id="listaIncorporacao" class="list"></div>
+      </div>
 
-  if (registros.length === 0) {
-    res.textContent = "Nenhuma presença marcada.";
-    return;
-  }
+      <div class="divider"></div>
 
-  const { error } = await sb.from("chamadas").insert(registros);
+      <!-- Desenvolvimento -->
+      <div class="section">
+        <div class="section-head">
+          <h3>Médiuns em Desenvolvimento</h3>
+          <div class="legend">
+            <span class="pill">P = Presente</span>
+            <span class="pill">M = Mesa</span>
+            <span class="pill">F = Falta</span>
+            <span class="pill info" id="countDesenvolvimento"></span>
+          </div>
+        </div>
+        <div id="listaDesenvolvimento" class="list"></div>
+      </div>
 
-  if (error) {
-    console.error("Erro salvar chamadas:", error);
-    res.textContent = "❌ Erro ao salvar: " + error.message;
-    return;
-  }
+      <div class="divider"></div>
 
-  // 1) atualiza contadores de faltas/presenças
-  await atualizarEstatisticas(registros);
+      <!-- Carência -->
+      <div class="section">
+        <div class="section-head">
+          <h3>Médiuns em Carência</h3>
+          <div class="legend">
+            <span class="pill">P = Presente</span>
+            <span class="pill">F = Falta</span>
+            <span class="pill warn">Carência não senta na mesa</span>
+          </div>
+        </div>
+        <div id="listaCarencia" class="list"></div>
+      </div>
+    </section>
 
-  // 2) atualiza rotação (quem foi M ou PS)
-  await atualizarRotacao(registros);
+    <!-- ABA ADMIN -->
+    <section id="abaAdmin" class="container hidden">
+      <div class="panel">
+        <h3>Participantes</h3>
+        <p class="muted">Adicionar, editar, ativar/inativar e mover entre grupos.</p>
 
-  // 3) recarrega rotação do banco para garantir
-  await carregarRotacao();
+        <div class="row wrap">
+          <input id="adminBusca" class="input" placeholder="Buscar por nome..." />
+          <select id="adminFiltroGrupo" class="input">
+            <option value="">Todos os grupos</option>
+            <option value="dirigente">Dirigentes</option>
+            <option value="incorporacao">Incorporação</option>
+            <option value="desenvolvimento">Desenvolvimento</option>
+            <option value="carencia">Carência</option>
+          </select>
+          <select id="adminFiltroAtivo" class="input">
+            <option value="ativos">Ativos</option>
+            <option value="todos">Todos</option>
+            <option value="inativos">Inativos</option>
+          </select>
+          <button class="btn primary" id="btnNovo">Novo participante</button>
+        </div>
 
-  // 4) redesenha com tudo atualizado
-  renderGruposChamada();
+        <div id="adminLista" class="admin-list"></div>
+        <div id="adminMsg" class="notice"></div>
+      </div>
 
-  res.textContent = "✔ Chamada registrado com sucesso!";
-}
+      <!-- Modal -->
+      <div id="modal" class="modal hidden">
+        <div class="modal-card">
+          <div class="modal-head">
+            <h3 id="modalTitle">Editar</h3>
+            <button class="btn ghost" id="btnFecharModal">Fechar</button>
+          </div>
 
-// atualiza faltas/presenças na tabela mediums
-async function atualizarEstatisticas(registros) {
-  const deltas = {}; // { medium_id: { pres: n, falt: n } }
+          <div class="grid">
+            <div>
+              <label class="label">Nome</label>
+              <input id="mName" class="input" />
+            </div>
 
-  registros.forEach((r) => {
-    if (!deltas[r.medium_id]) {
-      deltas[r.medium_id] = { pres: 0, falt: 0 };
-    }
-    if (r.status === "F") {
-      deltas[r.medium_id].falt++;
-    } else {
-      // P, M, PS contam como presença
-      deltas[r.medium_id].pres++;
-    }
-  });
+            <div>
+              <label class="label">Grupo</label>
+              <select id="mGroup" class="input">
+                <option value="dirigente">Dirigente</option>
+                <option value="incorporacao">Incorporação</option>
+                <option value="desenvolvimento">Desenvolvimento</option>
+                <option value="carencia">Carência</option>
+              </select>
+            </div>
 
-  const ids = Object.keys(deltas);
-  for (const id of ids) {
-    const delta = deltas[id];
-    const m = mediumsCache.find((mm) => mm.id === id);
+            <div class="row wrap">
+              <label class="check">
+                <input id="mActive" type="checkbox" />
+                Ativo
+              </label>
+              <label class="check">
+                <input id="mPrimeira" type="checkbox" />
+                Primeira incorporação (marcação)
+              </label>
+            </div>
 
-    const presAtual = m?.presencas || 0;
-    const faltAtual = m?.faltas || 0;
+            <div>
+              <label class="label">Carência total (sessões)</label>
+              <input id="mCarenciaTotal" class="input" type="number" min="0" />
+            </div>
 
-    const novaPres = presAtual + delta.pres;
-    const novaFalt = faltAtual + delta.falt;
+            <div>
+              <label class="label">Carência atual (sessões feitas)</label>
+              <input id="mCarenciaAtual" class="input" type="number" min="0" />
+            </div>
+          </div>
 
-    const { error } = await sb
-      .from("mediums")
-      .update({ presencas: novaPres, faltas: novaFalt })
-      .eq("id", id);
+          <div class="modal-actions">
+            <button class="btn primary" id="btnSalvarParticipante">Salvar</button>
+            <button class="btn danger" id="btnInativarParticipante">Inativar</button>
+          </div>
 
-    if (error) {
-      console.error("Erro atualizar estatísticas do médium", id, error);
-    } else if (m) {
-      m.presencas = novaPres;
-      m.faltas = novaFalt;
-    }
-  }
-}
+          <div id="modalMsg" class="notice"></div>
+        </div>
+      </div>
+    </section>
+  </div>
 
-// pega, por grupo, o último em ORDEM da lista geral que teve M ou PS
-async function atualizarRotacao(registros) {
-  const porGrupo = {
-    dirigente: [],
-    incorporacao: [],
-    desenvolvimento: [],
-    carencia: [],
-  };
-
-  registros.forEach((r) => {
-    // Só conta para rotação quem esteve na mesa ou psicografou
-    if (r.status !== "M" && r.status !== "PS") return;
-
-    const m = mediumsCache.find((mm) => mm.id === r.medium_id);
-    if (!m) return;
-    const g = m.group_type;
-    if (!porGrupo[g]) return;
-    porGrupo[g].push(m);
-  });
-
-  for (const g of Object.keys(porGrupo)) {
-    const usados = porGrupo[g];
-    if (!usados || usados.length === 0) continue;
-
-    let lastId = null;
-    let lastIndex = -1;
-
-    usados.forEach((m) => {
-      const idx = mediumsCache.findIndex((mm) => mm.id === m.id);
-      if (idx > lastIndex) {
-        lastIndex = idx;
-        lastId = m.id;
-      }
-    });
-
-    if (!lastId) continue;
-
-    const { error } = await sb
-      .from("rotacao")
-      .upsert({ group_type: g, last_medium_id: lastId });
-
-    if (error) {
-      console.error("Erro ao atualizar rotação do grupo", g, error);
-    } else {
-      rotaMap[g] = lastId;
-    }
-  }
-}
-
-// =====================
-// ADMIN - PARTICIPANTES
-// =====================
-
-function limparFormularioParticipante() {
-  document.getElementById("mediumId").value = "";
-  document.getElementById("mediumNome").value = "";
-  document.getElementById("mediumGrupo").value = "dirigente";
-  document.getElementById("mediumCarenciaTotal").value = "";
-  document.getElementById("mediumAtivo").checked = true;
-  document.getElementById("adminMensagem").textContent = "";
-}
-
-async function salvarParticipante() {
-  const id = document.getElementById("mediumId").value;
-  const nome = document.getElementById("mediumNome").value.trim();
-  const grupo = document.getElementById("mediumGrupo").value;
-  const carenciaTotalStr =
-    document.getElementById("mediumCarenciaTotal").value.trim();
-  const ativo = document.getElementById("mediumAtivo").checked;
-  const msg = document.getElementById("adminMensagem");
-
-  msg.textContent = "";
-
-  if (!nome) {
-    msg.textContent = "Informe o nome.";
-    return;
-  }
-
-  const carenciaTotal =
-    carenciaTotalStr === "" ? null : parseInt(carenciaTotalStr, 10);
-
-  const payload = {
-    name: nome,
-    group_type: grupo,
-    active: ativo,
-    carencia_total: carenciaTotal,
-  };
-
-  let error = null;
-
-  if (id) {
-    const resp = await sb.from("mediums").update(payload).eq("id", id);
-    error = resp.error;
-  } else {
-    const resp = await sb.from("mediums").insert(payload);
-    error = resp.error;
-  }
-
-  if (error) {
-    console.error("Erro salvar participante:", error);
-    msg.textContent = "Erro ao salvar participante: " + error.message;
-    return;
-  }
-
-  msg.textContent = "✔ Participante salvo com sucesso.";
-  limparFormularioParticipante();
-  await carregarMediums();
-  listarParticipantesAdmin();
-}
-
-function listarParticipantesAdmin() {
-  const cont = document.getElementById("tabelaParticipantes");
-  cont.innerHTML = "";
-
-  if (!mediumsCache || mediumsCache.length === 0) {
-    cont.innerHTML = "<i>Nenhum participante cadastrado.</i>";
-    return;
-  }
-
-  let html = `
-    <table>
-      <thead>
-        <tr>
-          <th>Nome</th>
-          <th>Grupo</th>
-          <th>Ativo</th>
-          <th>Ações</th>
-        </tr>
-      </thead>
-      <tbody>
-  `;
-
-  mediumsCache.forEach((m) => {
-    html += `
-      <tr>
-        <td>${m.name}</td>
-        <td>${m.group_type}</td>
-        <td>${m.active ? "Sim" : "Não"}</td>
-        <td>
-          <button class="admin-btn admin-edit" onclick="editarParticipante('${m.id}')">Editar</button>
-          <button class="admin-btn admin-delete" onclick="excluirParticipante('${m.id}')">Excluir</button>
-        </td>
-      </tr>
-    `;
-  });
-
-  html += "</tbody></table>";
-  cont.innerHTML = html;
-}
-
-// deixar funções visíveis pro onclick do HTML
-window.editarParticipante = function (id) {
-  const m = mediumsCache.find((x) => x.id === id);
-  if (!m) return;
-
-  document.getElementById("mediumId").value = m.id;
-  document.getElementById("mediumNome").value = m.name;
-  document.getElementById("mediumGrupo").value = m.group_type;
-  document.getElementById("mediumCarenciaTotal").value =
-    m.carencia_total ?? "";
-  document.getElementById("mediumAtivo").checked = !!m.active;
-
-  document.getElementById("adminMensagem").textContent =
-    "Editando participante...";
-};
-
-window.excluirParticipante = async function (id) {
-  if (!confirm("Confirmar exclusão deste participante?")) return;
-
-  const { error } = await sb.from("mediums").delete().eq("id", id);
-
-  if (error) {
-    console.error("Erro excluir participante:", error);
-    document.getElementById("adminMensagem").textContent =
-      "Erro ao excluir: " + error.message;
-    return;
-  }
-
-  document.getElementById("adminMensagem").textContent =
-    "✔ Participante excluído.";
-  await carregarMediums();
-  listarParticipantesAdmin();
-};
+  <script src="app.js"></script>
+</body>
+</html>
