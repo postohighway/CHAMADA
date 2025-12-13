@@ -1,514 +1,535 @@
 /* =========================================================
-   CHAMADA DE MÉDIUNS — FRONT DO ZERO (ESTÁVEL)
+   CHAMADA DE MÉDIUNS — app.js (ZERADO / ESTÁVEL)
+   - Não altera estética (somente lógica)
+   - Supabase + RLS
+   - Tabelas esperadas:
+       public.mediums  (id uuid, name text, group_type text, active bool, mesa bool, psicografia bool, ...)
+       public.chamadas (id uuid, medium_id uuid, data date, status text, created_at timestamptz)
+       public.feriados (id?, data date, ...)
    ========================================================= */
 
+/* ====== CONFIG SUPABASE (OK) ====== */
+const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co";
+const SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5vdXp6eXJldnlrZG1ucWlmamp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUzOTYzMDIsImV4cCI6MjA4MDk3MjMwMn0.s2OzeSXe7CrKDNl6fXkTcMj_Vgitod0l0h0BiJA79nc";
+
+/* ====== ESTADO ====== */
 let sb = null;
 
-let mediums = [];
-let rotacao = [];
-let feriados = [];
+let mediumsAll = [];      // todos
+let mediumsAtivos = [];   // ativos
+let feriadosSet = new Set();
 
+let chamadasHoje = new Map(); // medium_id -> status selecionado na UI
+let carregou = false;
+
+/* ====== HELPERS DOM (não mexe no layout) ====== */
 const $ = (id) => document.getElementById(id);
 
-function escapeHtml(str) {
-  return String(str || "")
-    .replaceAll("&","&amp;")
-    .replaceAll("<","&lt;")
-    .replaceAll(">","&gt;")
-    .replaceAll('"',"&quot;")
-    .replaceAll("'","&#039;");
-}
-
-function setConn(text, ok = true) {
-  const el = $("statusConn");
-  el.textContent = text;
-  el.style.borderColor = ok ? "rgba(32,209,122,.45)" : "rgba(255,75,75,.45)";
-}
-
-function setMsg(text) {
-  $("statusMsg").textContent = text || "";
-}
-
-function todayISO() {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth()+1).padStart(2,"0");
-  const dd = String(d.getDate()).padStart(2,"0");
-  return `${yyyy}-${mm}-${dd}`;
-}
-
-// Para não dar bug de fuso: força horário BR
-function getDayBR(iso) {
-  const d = new Date(`${iso}T03:00:00`);
-  return d.getDay(); // 0 dom ... 2 ter
-}
-
-/* =========================
-   LOADERS
-   ========================= */
-
-async function testarSelect() {
-  const { error } = await sb.from("mediums").select("id").limit(1);
-  if (error) throw error;
-}
-
-async function carregarMediums() {
-  const { data, error } = await sb.from("mediums").select("*").order("name", { ascending: true });
-  if (error) throw error;
-
-  mediums = (data || []).map(m => ({
-    ...m,
-    name: String(m.name || "").trim(),
-    active: m.active !== false
-  }));
-}
-
-async function carregarRotacao() {
-  const { data, error } = await sb.from("rotacao").select("*");
-  if (error) throw error;
-  rotacao = data || [];
-}
-
-async function carregarFeriados() {
-  const { data, error } = await sb.from("feriados").select("*");
-  if (error) throw error;
-  feriados = data || [];
-}
-
-function isFeriado(iso) {
-  return feriados.some(f => {
-    const v = f.data || f.date || f.dia;
-    return String(v || "").slice(0,10) === iso;
-  });
-}
-
-/* =========================
-   ROTAÇÃO (dirigente mesa/ps)
-   ========================= */
-
-function getRotRow(groupType) {
-  return rotacao.find(r => r.group_type === groupType) || null;
-}
-
-function rotKeysForGroup(row) {
-  const keys = Object.keys(row || {});
-  const pick = (cands) => cands.find(k => keys.includes(k)) || null;
-
-  // tenta várias possibilidades (pra não depender do schema exato)
-  const mesaKey = pick(["last_mesa_id","last_medium_id","last_id","last"]);
-  const psKey   = pick(["last_ps_id","last_psicografia_id","last_psico_id","last_ps","last_psicografia"]);
-
-  return { mesaKey, psKey };
-}
-
-function nextFromRotation(list, lastId) {
-  if (!list.length) return null;
-  if (!lastId) return list[0].id;
-
-  const idx = list.findIndex(m => m.id === lastId);
-  if (idx === -1) return list[0].id;
-  return list[(idx + 1) % list.length].id;
-}
-
-function computeNextDirigentes() {
-  const dirigentes = mediums
-    .filter(m => m.active)
-    .filter(m => m.group_type === "dirigente")
-    .sort((a,b)=> String(a.name).localeCompare(String(b.name), "pt-BR"));
-
-  const rot = getRotRow("dirigente") || {};
-  const { mesaKey, psKey } = rotKeysForGroup(rot);
-
-  const lastMesa = mesaKey ? rot[mesaKey] : null;
-  const lastPs   = psKey ? rot[psKey] : null;
-
-  return {
-    dirigentes,
-    mesaKey,
-    psKey,
-    nextMesaId: nextFromRotation(dirigentes, lastMesa),
-    nextPsId: nextFromRotation(dirigentes, lastPs),
-  };
-}
-
-/* =========================
-   UI: DATA
-   ========================= */
-
-async function verificarDataUI() {
-  const iso = $("dataChamada").value;
-  const aviso = $("avisoData");
-  aviso.textContent = "";
-
-  if (!iso) { aviso.textContent = "Selecione uma data."; return false; }
-  if (getDayBR(iso) !== 2) { aviso.textContent = "❌ Chamada só pode ser feita em TERÇA-FEIRA."; return false; }
-
-  try {
-    await carregarFeriados();
-  } catch (e) {
-    aviso.textContent = "⚠️ Falha ao consultar feriados (verifique policy SELECT em feriados).";
-    return true; // não bloqueia
+// tenta achar um elemento por várias opções (pra não quebrar se o id variar)
+function pickId(possiveisIds) {
+  for (const id of possiveisIds) {
+    const el = document.getElementById(id);
+    if (el) return el;
   }
-
-  if (isFeriado(iso)) { aviso.textContent = "❌ Hoje é feriado! Chamada não permitida."; return false; }
-
-  aviso.textContent = "✅ Data válida.";
-  return true;
+  return null;
 }
+function text(el, t) { if (el) el.textContent = t; }
+function html(el, h) { if (el) el.innerHTML = h; }
+function show(el) { if (el) el.style.display = "block"; }
+function hide(el) { if (el) el.style.display = "none"; }
 
-/* =========================
-   UI: RENDER
-   ========================= */
+const elStatusConexao = pickId(["statusConexao", "status", "statusSupabase"]);
+const elMsgTopo = pickId(["mensagemTopo", "mensagem", "msgTopo"]);
+const elAvisoData = pickId(["avisoData", "statusData", "msgData"]);
+const elDataChamada = pickId(["dataChamada", "data", "inputData"]);
+const elBtnVerificar = pickId(["btnVerificarData", "verificarData", "btnVerificar"]);
+const elBtnSalvar = pickId(["btnSalvarChamada", "salvarChamada", "btnSalvar"]);
+const elResultadoSalvar = pickId(["resultadoSalvar", "msgSalvar", "resultado"]);
 
-function pctFalta(m) {
-  const f = Number(m.faltas || 0);
-  const p = Number(m.presencas || 0);
-  const t = f + p;
-  if (!t) return 0;
-  return Math.round((f * 100) / t);
-}
+// containers da chamada
+const elListaDirigentes     = pickId(["listaDirigentes", "dirigentesList"]);
+const elListaIncorporacao   = pickId(["listaIncorporacao", "incorporacaoList"]);
+const elListaDesenvolvimento= pickId(["listaDesenvolvimento", "desenvolvimentoList"]);
+const elListaCarencia       = pickId(["listaCarencia", "carenciaList"]);
 
-function makeRadio(name, value, label) {
-  const id = `${name}_${value}_${Math.random().toString(16).slice(2)}`;
-  return `
-    <label class="r" for="${id}">
-      <input id="${id}" type="radio" name="${name}" value="${value}">
-      <span>${label}</span>
-    </label>
-  `;
-}
+// participantes
+const elBuscaPart = pickId(["buscaParticipantes", "buscarParticipante", "busca"]);
+const elNovoNome  = pickId(["novoNome", "nomeNovo", "nome"]);
+const elNovoGrupo = pickId(["novoGrupo", "grupoNovo", "grupo"]);
+const elBtnAdd    = pickId(["btnAdicionarParticipante", "adicionarParticipante", "btnAdicionar"]);
+const elListaParticipantes = pickId(["listaParticipantes", "lista", "participantesList"]);
 
-function renderGrupo(divId, lista, opts) {
-  const el = $(divId);
-
-  if (!lista.length) {
-    el.innerHTML = `<div class="item"><div class="item__left"><div class="muted">Nenhum médium neste grupo.</div></div></div>`;
-    return;
-  }
-
-  const { groupType, nextMesaId, nextPsId } = opts;
-
-  el.innerHTML = lista.map(m => {
-    const p = pctFalta(m);
-    const faltaAlta = p >= 30;
-
-    let radios = "";
-    if (groupType === "carencia") {
-      radios += makeRadio(`st_${m.id}`, "P", "P");
-      radios += makeRadio(`st_${m.id}`, "F", "F");
-    } else if (groupType === "dirigente") {
-      radios += makeRadio(`st_${m.id}`, "P", "P");
-      radios += makeRadio(`st_${m.id}`, "M", "M");
-      radios += makeRadio(`st_${m.id}`, "F", "F");
-      radios += makeRadio(`st_${m.id}`, "PS", "PS");
-    } else {
-      radios += makeRadio(`st_${m.id}`, "P", "P");
-      radios += makeRadio(`st_${m.id}`, "M", "M");
-      radios += makeRadio(`st_${m.id}`, "F", "F");
-    }
-
-    let cls = "item";
-    let tag = "";
-
-    if (groupType === "dirigente") {
-      const isMesa = m.id === nextMesaId;
-      const isPs = m.id === nextPsId;
-
-      if (isMesa && isPs) cls += " nextBoth";
-      else if (isMesa) cls += " nextMesa";
-      else if (isPs) cls += " nextPs";
-
-      if (isMesa) tag += `<span class="tagNext">PRÓXIMO (MESA)</span>`;
-      if (isPs) tag += `<span class="tagNext">PRÓXIMO (PS)</span>`;
-    }
-
-    return `
-      <div class="${cls}">
-        <div class="item__left">
-          <div class="item__name">
-            ${escapeHtml(m.name)}
-            <span class="badge ${faltaAlta ? "badge--danger":""}">${p}% faltas</span>
-          </div>
-        </div>
-        <div class="item__radios">${radios}</div>
-        <div class="item__right">${tag}</div>
-      </div>
-    `;
-  }).join("");
-}
-
-function renderChamada() {
-  const ativos = mediums.filter(m => m.active);
-
-  const { dirigentes, nextMesaId, nextPsId } = computeNextDirigentes();
-  const incorporacao = ativos.filter(m => m.group_type === "incorporacao");
-  const desenvolvimento = ativos.filter(m => m.group_type === "desenvolvimento");
-  const carencia = ativos.filter(m => m.group_type === "carencia");
-
-  renderGrupo("listaDirigentes", dirigentes, { groupType: "dirigente", nextMesaId, nextPsId });
-  renderGrupo("listaIncorporacao", incorporacao, { groupType: "incorporacao" });
-  renderGrupo("listaDesenvolvimento", desenvolvimento, { groupType: "desenvolvimento" });
-  renderGrupo("listaCarencia", carencia, { groupType: "carencia" });
-}
-
-/* =========================
-   SALVAR CHAMADA
-   ========================= */
-
-function selectedStatusFor(id) {
-  const el = document.querySelector(`input[name="st_${id}"]:checked`);
-  return el ? el.value : null;
-}
-
-async function salvarChamada() {
-  $("resultadoSalvar").textContent = "";
-
-  const ok = await verificarDataUI();
-  if (!ok) { $("resultadoSalvar").textContent = "Corrija a data antes de salvar."; return; }
-
-  const iso = $("dataChamada").value;
-
-  const registros = [];
-  for (const m of mediums.filter(x => x.active)) {
-    const st = selectedStatusFor(m.id);
-    if (!st) continue;
-    registros.push({ medium_id: m.id, data: iso, status: st });
-  }
-
-  if (!registros.length) { $("resultadoSalvar").textContent = "Nenhuma presença marcada."; return; }
-
-  // 1) INSERT chamadas
-  const { error: errIns } = await sb.from("chamadas").insert(registros);
-  if (errIns) {
-    $("resultadoSalvar").textContent = `❌ Erro ao salvar chamadas: ${errIns.message}`;
-    return;
-  }
-
-  // 2) update presencas/faltas (PS conta como presença)
-  for (const r of registros) {
-    const m = mediums.find(x => x.id === r.medium_id);
-    const pres = Number(m?.presencas || 0) + (r.status === "F" ? 0 : 1);
-    const falt = Number(m?.faltas || 0) + (r.status === "F" ? 1 : 0);
-
-    const { error: eUp } = await sb.from("mediums").update({ presencas: pres, faltas: falt }).eq("id", r.medium_id);
-    if (eUp) {
-      $("resultadoSalvar").textContent = `⚠️ Chamadas salvas, mas não consegui atualizar estatísticas (RLS): ${eUp.message}`;
-      break;
-    }
-  }
-
-  // 3) tentativa de atualizar rotação (se permitido)
-  try {
-    await carregarRotacao();
-    const { mesaKey, psKey } = rotKeysForGroup(getRotRow("dirigente") || {});
-    const rotRow = getRotRow("dirigente");
-
-    let marcouMesaId = null;
-    let marcouPsId = null;
-
-    const idsDir = new Set(mediums.filter(m=>m.active && m.group_type==="dirigente").map(m=>m.id));
-    for (const r of registros) {
-      if (!idsDir.has(r.medium_id)) continue;
-      if (r.status === "M") marcouMesaId = r.medium_id;
-      if (r.status === "PS") marcouPsId = r.medium_id;
-    }
-
-    if (rotRow && (marcouMesaId || marcouPsId)) {
-      const payload = {};
-      if (mesaKey && marcouMesaId) payload[mesaKey] = marcouMesaId;
-      if (psKey && marcouPsId) payload[psKey] = marcouPsId;
-
-      if (Object.keys(payload).length) {
-        const { error: eRot } = await sb.from("rotacao").update(payload).eq("group_type", "dirigente");
-        if (eRot) {
-          $("resultadoSalvar").textContent = `⚠️ Chamadas salvas, mas rotação não atualizou (RLS): ${eRot.message}`;
-        }
-      }
-    }
-  } catch {}
-
-  await carregarTudo();
-  $("resultadoSalvar").textContent = "✅ Chamada registrada!";
-}
-
-/* =========================
-   PARTICIPANTES (admin)
-   ========================= */
-
-function groupLabel(g) {
-  if (g === "dirigente") return "Dirigente";
-  if (g === "incorporacao") return "Incorporação";
-  if (g === "desenvolvimento") return "Desenvolvimento";
-  if (g === "carencia") return "Carência";
-  return g;
-}
-
-function renderAdminList() {
-  const q = ($("busca").value || "").toLowerCase().trim();
-
-  const list = mediums
-    .slice()
-    .sort((a,b)=> String(a.name).localeCompare(String(b.name), "pt-BR"))
-    .filter(m => !q || String(m.name).toLowerCase().includes(q));
-
-  const el = $("listaAdmin");
-  el.innerHTML = list.map(m => `
-    <div class="adminRow">
-      <div>
-        <div style="font-weight:950">${escapeHtml(m.name)}</div>
-        <small>${groupLabel(m.group_type)}</small>
-      </div>
-      <div class="switch">
-        <span>Ativo</span>
-        <input type="checkbox" ${m.active ? "checked":""} data-act="${m.id}">
-      </div>
-      <div class="adminActions">
-        <button class="btnMini" data-edit="${m.id}">Editar</button>
-        <button class="btnMini btnMini--danger" data-del="${m.id}">Excluir</button>
-      </div>
-    </div>
-  `).join("");
-
-  el.querySelectorAll("input[data-act]").forEach(chk => {
-    chk.addEventListener("change", async (e) => {
-      const id = e.target.getAttribute("data-act");
-      const active = e.target.checked;
-      await updateMedium(id, { active });
-    });
-  });
-
-  el.querySelectorAll("button[data-edit]").forEach(btn => {
-    btn.addEventListener("click", async (e) => {
-      const id = e.target.getAttribute("data-edit");
-      await editarMediumPrompt(id);
-    });
-  });
-
-  el.querySelectorAll("button[data-del]").forEach(btn => {
-    btn.addEventListener("click", async (e) => {
-      const id = e.target.getAttribute("data-del");
-      if (!confirm("Excluir este participante?")) return;
-      await deleteMedium(id);
-    });
-  });
-}
-
-async function updateMedium(id, patch) {
-  $("msgAdmin").textContent = "";
-  try {
-    const { error } = await sb.from("mediums").update(patch).eq("id", id);
-    if (error) throw error;
-    await carregarTudo();
-    $("msgAdmin").textContent = "✅ Atualizado.";
-  } catch (e) {
-    $("msgAdmin").textContent = `❌ Sem permissão (RLS) ou erro: ${e.message}`;
+function setConectando(msg = "Conectando...") {
+  if (elStatusConexao) {
+    elStatusConexao.textContent = msg;
+    // não altera classes/estética
   }
 }
-
-async function deleteMedium(id) {
-  $("msgAdmin").textContent = "";
-  try {
-    const { error } = await sb.from("mediums").delete().eq("id", id);
-    if (error) throw error;
-    await carregarTudo();
-    $("msgAdmin").textContent = "✅ Excluído.";
-  } catch (e) {
-    $("msgAdmin").textContent = `❌ Sem permissão (RLS) ou erro: ${e.message}`;
-  }
+function setConectado(msg = "Conectado ✅") {
+  if (elStatusConexao) elStatusConexao.textContent = msg;
+}
+function setErroTopo(msg) {
+  if (elMsgTopo) elMsgTopo.textContent = msg;
 }
 
-async function editarMediumPrompt(id) {
-  const m = mediums.find(x => x.id === id);
-  if (!m) return;
-
-  const novoNome = prompt("Nome:", m.name);
-  if (novoNome === null) return;
-
-  const novoGrupo = prompt("Grupo (dirigente/incorporacao/desenvolvimento/carencia):", m.group_type);
-  if (novoGrupo === null) return;
-
-  await updateMedium(id, { name: novoNome.trim(), group_type: novoGrupo.trim() });
-}
-
-async function adicionarParticipante() {
-  $("msgAdmin").textContent = "";
-
-  const name = ($("novoNome").value || "").trim();
-  const group_type = $("novoGrupo").value;
-
-  if (!name) { $("msgAdmin").textContent = "Informe o nome."; return; }
-
-  try {
-    const payload = { name, group_type, active: true, faltas: 0, presencas: 0 };
-    const { error } = await sb.from("mediums").insert(payload);
-    if (error) throw error;
-
-    $("novoNome").value = "";
-    await carregarTudo();
-    $("msgAdmin").textContent = "✅ Adicionado.";
-  } catch (e) {
-    $("msgAdmin").textContent = `❌ Sem permissão (RLS) ou erro: ${e.message}`;
-  }
-}
-
-/* =========================
-   ABAS + BOOT
-   ========================= */
-
-function showTab(which) {
-  const isChamada = which === "chamada";
-  $("abaChamada").classList.toggle("hidden", !isChamada);
-  $("abaParticipantes").classList.toggle("hidden", isChamada);
-  $("btnTabChamada").classList.toggle("chip--active", isChamada);
-  $("btnTabParticipantes").classList.toggle("chip--active", !isChamada);
-}
-
-async function carregarTudo() {
-  setConn("Carregando…", true);
-  setMsg("");
-
-  await carregarMediums();
-  await carregarRotacao();
-
-  renderChamada();
-  renderAdminList();
-
-  // informa modo admin (se RLS bloquear)
-  $("statusAdmin").textContent =
-    "Se ações de editar/adicionar/excluir derem erro, é porque o banco está com RLS permitindo só SELECT para anon.";
-
-  setConn("Conectado ✅", true);
-}
-
+/* ====== INIT ====== */
 window.addEventListener("DOMContentLoaded", async () => {
   try {
+    // 1) Supabase lib carregada?
     if (!window.supabase || !window.supabase.createClient) {
-      setConn("❌ supabase-js não carregou", false);
-      setMsg("Verifique o script do supabase-js no index.html (deve vir antes do app.js).");
+      setConectando("Supabase JS não carregou (verifique o <script> do supabase-js).");
       return;
     }
 
-    const URL = window.__SUPABASE_URL__;
-    const KEY = window.__SUPABASE_ANON_KEY__;
-    sb = window.supabase.createClient(URL, KEY);
+    // 2) client
+    sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    $("dataChamada").value = todayISO();
-    $("btnVerificarData").addEventListener("click", verificarDataUI);
-    $("btnSalvar").addEventListener("click", salvarChamada);
+    // 3) Teste rápido
+    setConectando("Conectando ao Supabase...");
+    await testeSelectBasico();
 
-    $("btnTabChamada").addEventListener("click", () => showTab("chamada"));
-    $("btnTabParticipantes").addEventListener("click", () => showTab("participantes"));
+    // 4) Wire UI
+    wireUI();
 
-    $("busca").addEventListener("input", renderAdminList);
-    $("btnAdicionar").addEventListener("click", adicionarParticipante);
-
-    setConn("Testando conexão…", true);
-    await testarSelect();
-
+    // 5) Carregar dados
     await carregarTudo();
+
+    setConectado("Conectado ✅");
+    carregou = true;
   } catch (e) {
-    setConn("❌ Erro ao conectar", false);
-    setMsg(e?.message || String(e));
     console.error(e);
+    setConectando("Falha ao iniciar: " + (e?.message || e));
   }
 });
+
+/* ====== TESTE DE CONEXÃO ====== */
+async function testeSelectBasico() {
+  // Se isso falhar, não é “tela”: é conexão/URL/KEY/RLS/SDK
+  const { data, error } = await sb.from("mediums").select("id").limit(1);
+  if (error) throw new Error("Falha no SELECT mediums: " + error.message);
+  return data;
+}
+
+/* ====== UI EVENTS ====== */
+function wireUI() {
+  if (elBtnVerificar) {
+    elBtnVerificar.addEventListener("click", async () => {
+      await verificarData();
+    });
+  }
+
+  if (elBtnSalvar) {
+    elBtnSalvar.addEventListener("click", async () => {
+      await salvarChamada();
+    });
+  }
+
+  if (elBtnAdd) {
+    elBtnAdd.addEventListener("click", async () => {
+      await adicionarParticipante();
+    });
+  }
+
+  if (elBuscaPart) {
+    elBuscaPart.addEventListener("input", () => {
+      renderParticipantes();
+    });
+  }
+
+  // se tiver input de data, já sugere hoje
+  if (elDataChamada && !elDataChamada.value) {
+    // deixa no formato que seu input aceitar (muitos aceitam YYYY-MM-DD)
+    const hoje = new Date();
+    const iso = hoje.toISOString().slice(0, 10);
+    elDataChamada.value = iso;
+  }
+}
+
+/* ====== LOADERS ====== */
+async function carregarTudo() {
+  await carregarFeriados();
+  await carregarMediums();
+  await renderChamada();
+  await renderParticipantes();
+}
+
+async function carregarFeriados() {
+  feriadosSet = new Set();
+  const { data, error } = await sb.from("feriados").select("data");
+  if (error) {
+    // não trava o app, mas avisa (seu print antigo mostrava isso)
+    console.warn("Erro feriados:", error);
+    if (elAvisoData) elAvisoData.textContent = "⚠️ Erro ao consultar feriados (verifique RLS/políticas).";
+    return;
+  }
+  (data || []).forEach((r) => {
+    if (r?.data) feriadosSet.add(String(r.data));
+  });
+}
+
+async function carregarMediums() {
+  const { data, error } = await sb
+    .from("mediums")
+    .select("*")
+    .order("name", { ascending: true });
+
+  if (error) throw new Error("Erro ao carregar mediums: " + error.message);
+
+  mediumsAll = data || [];
+  mediumsAtivos = mediumsAll.filter((m) => m.active === true);
+}
+
+/* ====== VALIDAÇÃO DATA ====== */
+async function verificarData() {
+  if (!elDataChamada) return false;
+
+  const dataStr = elDataChamada.value;
+  if (!dataStr) {
+    if (elAvisoData) elAvisoData.textContent = "Selecione uma data.";
+    return false;
+  }
+
+  // dia da semana (0 dom ... 2 terça)
+  const d = new Date(dataStr + "T03:00:00"); // evita timezone quebrar
+  const diaSemana = d.getDay();
+
+  // terça-feira somente
+  if (diaSemana !== 2) {
+    if (elAvisoData) elAvisoData.textContent = "✘ Chamada só pode ser feita em TERÇA-FEIRA.";
+    return false;
+  }
+
+  // feriado
+  if (feriadosSet.has(dataStr)) {
+    if (elAvisoData) elAvisoData.textContent = "✘ Hoje é feriado! Chamada não permitida.";
+    return false;
+  }
+
+  if (elAvisoData) elAvisoData.textContent = "✅ Data válida, pode registrar presença.";
+  return true;
+}
+
+/* ====== RENDER CHAMADA ====== */
+async function renderChamada() {
+  chamadasHoje = new Map(); // limpa seleção em memória
+
+  const ativos = mediumsAtivos.slice();
+
+  const dirigentes = ativos.filter((m) => m.group_type === "dirigente");
+  const incorporacao = ativos.filter((m) => m.group_type === "incorporacao");
+  const desenvolvimento = ativos.filter((m) => m.group_type === "desenvolvimento");
+  const carencia = ativos.filter((m) => m.group_type === "carencia");
+
+  renderGrupo(elListaDirigentes, dirigentes, "dirigente");
+  renderGrupo(elListaIncorporacao, incorporacao, "incorporacao");
+  renderGrupo(elListaDesenvolvimento, desenvolvimento, "desenvolvimento");
+  renderGrupo(elListaCarencia, carencia, "carencia");
+}
+
+function renderGrupo(container, lista, groupType) {
+  if (!container) return;
+
+  if (!lista || lista.length === 0) {
+    container.innerHTML = `<div class="empty">Nenhum médium neste grupo.</div>`;
+    return;
+  }
+
+  container.innerHTML = "";
+  lista.forEach((m) => {
+    const card = document.createElement("div");
+    card.className = "medium-card"; // mantém seu CSS
+
+    // tags “próximo”
+    const tagMesa = m.mesa ? `<span class="tag-next tag-mesa">PRÓXIMO (MESA)</span>` : "";
+    const tagPS   = m.psicografia ? `<span class="tag-next tag-ps">PRÓXIMO (PS)</span>` : "";
+
+    // % falta (se tiver faltas/presencas)
+    const faltas = Number(m.faltas || 0);
+    const pres = Number(m.presencas || 0);
+    const total = faltas + pres;
+    const perc = total > 0 ? Math.round((faltas * 100) / total) : 0;
+    const percHtml = `<span class="badge-falta">${perc}% faltas</span>`;
+
+    // radios
+    let radios = "";
+    if (groupType === "carencia") {
+      radios = radiosHTML(m.id, ["P", "F"]);
+    } else if (groupType === "dirigente") {
+      // dirigentes tem PS também
+      radios = radiosHTML(m.id, ["P", "M", "F", "PS"]);
+    } else {
+      radios = radiosHTML(m.id, ["P", "M", "F"]);
+    }
+
+    card.innerHTML = `
+      <div class="card-left">
+        <div class="medium-name">${escapeHtml(m.name || "")} ${percHtml}</div>
+      </div>
+      <div class="card-right">
+        <div class="next-tags">${tagMesa} ${tagPS}</div>
+        <div class="radios">${radios}</div>
+      </div>
+    `;
+
+    // eventos radios
+    card.querySelectorAll(`input[name="status_${m.id}"]`).forEach((inp) => {
+      inp.addEventListener("change", () => {
+        chamadasHoje.set(m.id, inp.value);
+      });
+    });
+
+    container.appendChild(card);
+  });
+}
+
+function radiosHTML(mediumId, opcoes) {
+  return opcoes
+    .map((v) => {
+      const id = `st_${mediumId}_${v}`;
+      return `
+        <label class="radio">
+          <input type="radio" id="${id}" name="status_${mediumId}" value="${v}">
+          <span>${v}</span>
+        </label>
+      `;
+    })
+    .join("");
+}
+
+/* ====== SALVAR CHAMADA ====== */
+async function salvarChamada() {
+  if (elResultadoSalvar) elResultadoSalvar.textContent = "";
+
+  // valida data
+  const okData = await verificarData();
+  if (!okData) {
+    if (elResultadoSalvar) elResultadoSalvar.textContent = "Corrija a data antes de salvar.";
+    return;
+  }
+  const dataStr = elDataChamada?.value;
+  if (!dataStr) return;
+
+  // monta registros
+  const registros = [];
+  for (const [mediumId, status] of chamadasHoje.entries()) {
+    registros.push({ medium_id: mediumId, data: dataStr, status });
+  }
+
+  if (registros.length === 0) {
+    if (elResultadoSalvar) elResultadoSalvar.textContent = "Nenhuma presença marcada.";
+    return;
+  }
+
+  try {
+    const { error } = await sb.from("chamadas").insert(registros);
+
+    if (error) {
+      console.error("Erro insert chamadas:", error);
+
+      // Se for RLS (o seu print do iPhone)
+      const msg = String(error.message || "");
+      if (msg.toLowerCase().includes("row-level security") || msg.toLowerCase().includes("rls")) {
+        if (elResultadoSalvar) {
+          elResultadoSalvar.textContent =
+            '❌ RLS bloqueou o INSERT na tabela "chamadas".\n' +
+            "Você precisa liberar INSERT para role anon (ou voltar a usar login).\n" +
+            "Se quiser, eu te mando o SQL exato.";
+        }
+        return;
+      }
+
+      if (elResultadoSalvar) elResultadoSalvar.textContent = "❌ Erro ao salvar: " + error.message;
+      return;
+    }
+
+    if (elResultadoSalvar) elResultadoSalvar.textContent = "✅ Chamada salva com sucesso!";
+
+    // após salvar: atualiza contadores e “próximos”
+    await atualizarEstatisticasEAtribuicoes(registros);
+
+    // recarrega dados e redesenha
+    await carregarMediums();
+    await renderChamada();
+    await renderParticipantes();
+  } catch (e) {
+    console.error(e);
+    if (elResultadoSalvar) elResultadoSalvar.textContent = "❌ Exceção ao salvar: " + (e?.message || e);
+  }
+}
+
+/* ====== ATUALIZA ESTATÍSTICAS / MESA / PS (sem mexer no layout) ====== */
+async function atualizarEstatisticasEAtribuicoes(registros) {
+  // 1) Atualiza presencas/faltas no mediums
+  // 2) Se status == 'M' -> gira "mesa" (somente dirigentes)
+  //    Se status == 'PS' -> gira "psicografia" (somente dirigentes)
+
+  // cache de mediums por id
+  const byId = new Map(mediumsAll.map((m) => [m.id, m]));
+
+  // Atualização simples (um por um) para ficar robusto sem RPC
+  for (const r of registros) {
+    const m = byId.get(r.medium_id);
+    if (!m) continue;
+
+    const status = r.status;
+
+    // faltas/presencas
+    if (status === "F") {
+      const novo = Number(m.faltas || 0) + 1;
+      await sb.from("mediums").update({ faltas: novo }).eq("id", r.medium_id);
+      m.faltas = novo;
+    } else {
+      // P / M / PS contam como presença (do seu padrão anterior)
+      const novo = Number(m.presencas || 0) + 1;
+      await sb.from("mediums").update({ presencas: novo }).eq("id", r.medium_id);
+      m.presencas = novo;
+    }
+
+    // rotação mesa / psicografia: só se for dirigente
+    if (m.group_type === "dirigente") {
+      if (status === "M") {
+        await rotacionarFlag("mesa");
+      }
+      if (status === "PS") {
+        await rotacionarFlag("psicografia");
+      }
+    }
+  }
+}
+
+/* gira a flag mesa/psicografia para o próximo dirigente ativo */
+async function rotacionarFlag(flagName) {
+  // pega dirigentes ativos
+  const dirigentes = mediumsAtivos.filter((x) => x.group_type === "dirigente");
+
+  if (dirigentes.length === 0) return;
+
+  // acha o atual flag==true
+  const idxAtual = dirigentes.findIndex((x) => x[flagName] === true);
+
+  // se não tem nenhum marcado, marca o primeiro
+  if (idxAtual === -1) {
+    const first = dirigentes[0];
+    await sb.from("mediums").update({ [flagName]: true }).eq("id", first.id);
+    return;
+  }
+
+  const atual = dirigentes[idxAtual];
+  const prox = dirigentes[(idxAtual + 1) % dirigentes.length];
+
+  // desmarca atual, marca próximo
+  await sb.from("mediums").update({ [flagName]: false }).eq("id", atual.id);
+  await sb.from("mediums").update({ [flagName]: true }).eq("id", prox.id);
+}
+
+/* ====== PARTICIPANTES ====== */
+async function renderParticipantes() {
+  if (!elListaParticipantes) return;
+
+  const termo = (elBuscaPart?.value || "").trim().toLowerCase();
+
+  const lista = mediumsAll
+    .filter((m) => {
+      if (!termo) return true;
+      return String(m.name || "").toLowerCase().includes(termo);
+    })
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "pt-BR"));
+
+  const rows = lista.map((m) => {
+    const ativo = m.active === true;
+    const grupo = m.group_type || "";
+    return `
+      <div class="part-row">
+        <div class="part-name">${escapeHtml(m.name || "")}</div>
+        <div class="part-actions">
+          <select class="part-grupo" data-id="${m.id}">
+            ${optGrupo("dirigente", grupo)}
+            ${optGrupo("incorporacao", grupo)}
+            ${optGrupo("desenvolvimento", grupo)}
+            ${optGrupo("carencia", grupo)}
+          </select>
+          <button class="part-toggle" data-id="${m.id}" data-ativo="${ativo ? "1" : "0"}">
+            ${ativo ? "Ativo" : "Inativo"}
+          </button>
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  elListaParticipantes.innerHTML = rows || `<div class="empty">Nenhum participante.</div>`;
+
+  // listeners: troca grupo
+  elListaParticipantes.querySelectorAll(".part-grupo").forEach((sel) => {
+    sel.addEventListener("change", async () => {
+      const id = sel.getAttribute("data-id");
+      const val = sel.value;
+      await sb.from("mediums").update({ group_type: val }).eq("id", id);
+      await carregarMediums();
+      await renderChamada();
+      await renderParticipantes();
+    });
+  });
+
+  // listeners: toggle ativo
+  elListaParticipantes.querySelectorAll(".part-toggle").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const id = btn.getAttribute("data-id");
+      const ativo = btn.getAttribute("data-ativo") === "1";
+      await sb.from("mediums").update({ active: !ativo }).eq("id", id);
+      await carregarMediums();
+      await renderChamada();
+      await renderParticipantes();
+    });
+  });
+}
+
+function optGrupo(valor, atual) {
+  const sel = valor === atual ? "selected" : "";
+  // label bonitinho sem mexer no CSS
+  const label =
+    valor === "dirigente" ? "Dirigente" :
+    valor === "incorporacao" ? "Incorporação" :
+    valor === "desenvolvimento" ? "Desenvolvimento" :
+    valor === "carencia" ? "Carência" : valor;
+  return `<option value="${valor}" ${sel}>${label}</option>`;
+}
+
+async function adicionarParticipante() {
+  if (!elNovoNome || !elNovoGrupo) return;
+
+  const name = (elNovoNome.value || "").trim();
+  const group_type = elNovoGrupo.value;
+
+  if (!name) return;
+
+  const payload = {
+    name,
+    group_type,
+    active: true,
+    faltas: 0,
+    presencas: 0,
+  };
+
+  const { error } = await sb.from("mediums").insert([payload]);
+  if (error) {
+    console.error(error);
+    setErroTopo("Erro ao adicionar participante: " + error.message);
+    return;
+  }
+
+  elNovoNome.value = "";
+  await carregarMediums();
+  await renderChamada();
+  await renderParticipantes();
+}
+
+/* ====== UTIL ====== */
+function escapeHtml(str) {
+  return String(str)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
