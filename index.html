@@ -1,161 +1,64 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-br">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Chamada de Médiuns</title>
-  <style>
-    :root{
-      --bg1:#0b2a40;
-      --bg2:#071c2c;
-      --card:rgba(8, 28, 44, .55);
-      --stroke:rgba(255,255,255,.10);
-      --text:#eaf2ff;
-      --muted:rgba(234,242,255,.70);
-      --btn:#1e3c55;
-      --btn2:#163247;
-      --green1:#18c27a;
-      --green2:#0da35f;
-      --red:#ff5b5b;
-      --yellow:#ffd166;
-    }
-    body{
-      margin:0;
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
-      color:var(--text);
-      min-height:100vh;
-      background: radial-gradient(1200px 600px at 20% 0%, #123a55 0%, transparent 60%),
-                  linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
-    }
-    .wrap{max-width:860px;margin:0 auto;padding:28px 16px 50px;}
-    h1{margin:0 0 6px;font-size:44px;letter-spacing:.3px;}
-    .subtitle{margin:0 0 18px;color:var(--muted);font-size:16px}
-    .card{
-      background:var(--card);
-      border:1px solid var(--stroke);
-      border-radius:22px;
-      padding:18px;
-      box-shadow: 0 10px 30px rgba(0,0,0,.35);
-      backdrop-filter: blur(10px);
-    }
-    .row{display:flex;gap:14px;flex-wrap:wrap;align-items:center}
-    .pill{
-      display:inline-flex;align-items:center;gap:8px;
-      padding:10px 14px;border-radius:14px;
-      background:rgba(255,255,255,.06);
-      border:1px solid var(--stroke);
-      font-weight:600;
-      min-width:140px;
-      justify-content:center;
-    }
-    .dot{width:10px;height:10px;border-radius:999px;background:var(--yellow);box-shadow:0 0 10px rgba(255,209,102,.55)}
-    .dot.ok{background:var(--green1);box-shadow:0 0 10px rgba(24,194,122,.55)}
-    .dot.err{background:var(--red);box-shadow:0 0 10px rgba(255,91,91,.55)}
-    .input{
-      background:rgba(0,0,0,.15);
-      border:1px solid var(--stroke);
-      color:var(--text);
-      padding:14px 14px;
-      border-radius:16px;
-      outline:none;
-      min-width:220px;
-      font-size:16px;
-    }
-    .btn{
-      background:linear-gradient(180deg,var(--btn) 0%, var(--btn2) 100%);
-      border:1px solid var(--stroke);
-      color:var(--text);
-      padding:14px 18px;
-      border-radius:18px;
-      font-weight:700;
-      cursor:pointer;
-      min-width:120px;
-    }
-    .btn:disabled{opacity:.55;cursor:not-allowed}
-    .btnGreen{
-      background:linear-gradient(180deg,var(--green1) 0%, var(--green2) 100%);
-      border:none;
-      color:#062014;
-      padding:14px 18px;
-      border-radius:18px;
-      font-weight:800;
-      cursor:pointer;
-      min-width:180px;
-    }
-    .btnGreen:disabled{opacity:.55;cursor:not-allowed}
-    .msg{margin-top:10px;color:var(--muted);font-size:14px}
-    h2{margin:20px 0 10px;font-size:34px}
-    .hint{margin-top:6px;color:var(--muted)}
-    .list{display:flex;flex-direction:column;gap:10px}
-    .item{
-      display:flex;align-items:center;justify-content:space-between;gap:12px;
-      padding:12px 12px;
-      border-radius:16px;
-      background:rgba(255,255,255,.06);
-      border:1px solid var(--stroke);
-    }
-    .name{font-size:18px;font-weight:700}
-    .seg{display:flex;gap:8px}
-    .seg button{
-      width:46px;height:40px;border-radius:14px;
-      border:1px solid var(--stroke);
-      background:rgba(0,0,0,.10);
-      color:var(--text);
-      font-weight:900;
-      cursor:pointer;
-    }
-    .seg button.active{outline:2px solid rgba(24,194,122,.55); background:rgba(24,194,122,.18)}
-    .seg button.disabled{opacity:.35;cursor:not-allowed}
-    .small{font-size:12px;color:var(--muted)}
-    .split{height:1px;background:rgba(255,255,255,.10);margin:12px 0}
-  </style>
+  <link rel="stylesheet" href="./style.css" />
 </head>
 
 <body>
-  <div class="wrap">
-    <h1>Chamada de Médiuns</h1>
-    <p class="subtitle">Reunião: terça-feira 18:30 (exceto feriados)</p>
+  <!-- Mantive ids simples e estáveis. Se o seu style.css já estiliza classes/estrutura,
+       ele vai continuar mandando no visual. -->
 
-    <div class="card">
-      <div class="row">
-        <div class="pill" id="pillConn">
-          <span class="dot" id="dotConn"></span>
-          <span id="txtConn">Conectando...</span>
-        </div>
+  <main class="container">
+    <header class="hero">
+      <h1>Chamada de Médiuns</h1>
+      <p>Reunião: terça-feira 18:30 (exceto feriados)</p>
+    </header>
 
-        <div style="flex:1;min-width:260px">
-          <div class="small">Data da chamada</div>
-          <input class="input" id="dt" type="date" />
-        </div>
+    <section class="card">
+      <div id="statusConexao" class="status">Conectando...</div>
 
-        <button class="btn" id="btnVerificar">Verificar data</button>
+      <div class="field">
+        <label>Data da chamada</label>
+        <input id="dataChamada" type="date" />
       </div>
 
-      <div style="margin-top:14px">
-        <button class="btnGreen" id="btnSalvar" disabled>Salvar chamada</button>
+      <div class="actions">
+        <button id="btnVerificarData" type="button">Verificar data</button>
+        <button id="btnSalvarChamada" type="button">Salvar chamada</button>
       </div>
 
-      <div class="msg" id="msg">Selecione a data e clique em “Verificar data”.</div>
+      <div id="mensagemTopo" class="msg"></div>
+      <div id="resultadoSalvar" class="msg"></div>
+    </section>
 
-      <div class="split"></div>
-
+    <section class="section">
       <h2>Dirigentes</h2>
-      <div class="list" id="list_dirigentes"></div>
+      <div id="listaDirigentes" class="lista"></div>
+    </section>
 
+    <section class="section">
       <h2>Médiuns de Incorporação</h2>
-      <div class="list" id="list_incorporacao"></div>
+      <div id="listaIncorporacao" class="lista"></div>
+    </section>
 
+    <section class="section">
       <h2>Médiuns em Desenvolvimento</h2>
-      <div class="list" id="list_desenvolvimento"></div>
+      <div id="listaDesenvolvimento" class="lista"></div>
+    </section>
 
+    <section class="section">
       <h2>Médiuns em Carência</h2>
-      <div class="hint">Carência não senta na mesa (somente P/F).</div>
-      <div class="list" id="list_carencia"></div>
-    </div>
-  </div>
+      <div id="listaCarencia" class="lista"></div>
+    </section>
+  </main>
 
-  <!-- Supabase v2 CDN -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" crossorigin="anonymous"></script>
-  <script src="./app.js"></script>
+  <!-- 1) Supabase JS PRIMEIRO (UMD) -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+
+  <!-- 2) app.js DEPOIS (com cache-busting) -->
+  <script src="./app.js?v=1"></script>
 </body>
 </html>
