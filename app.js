@@ -1,514 +1,306 @@
 /* =========================================================
-   CHAMADA DE MÉDIUNS — FRONT DO ZERO (ESTÁVEL)
+   CHAMADA DE MÉDIUNS - app.js (ESTÁVEL)
+   - NÃO usa service_role
+   - REST + headers (apikey + Authorization)
+   - Tabelas: public.mediums, public.chamadas, public.feriados
    ========================================================= */
 
-let sb = null;
+/** ✅ COLE AQUI (APENAS ANON PUBLIC KEY) */
+const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co"; // ex: https://xxxx.supabase.co
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5vdXp6eXJldnlrZG1ucWlmamp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUzOTYzMDIsImV4cCI6MjA4MDk3MjMwMn0.s2OzeSXe7CrKDNl6fXkTcMj_Vgitod0l0h0BiJA79nc";
 
-let mediums = [];
-let rotacao = [];
-let feriados = [];
-
+/** ======= IDs UI ======= */
 const $ = (id) => document.getElementById(id);
 
-function escapeHtml(str) {
-  return String(str || "")
-    .replaceAll("&","&amp;")
-    .replaceAll("<","&lt;")
-    .replaceAll(">","&gt;")
-    .replaceAll('"',"&quot;")
-    .replaceAll("'","&#039;");
+const elStatusPill = $("statusPill");
+const elStatusText = $("statusText");
+const elMsgTopo = $("msgTopo");
+const elMsgErro = $("msgErro");
+const elData = $("dataChamada");
+const btnVerificar = $("btnVerificar");
+const btnSalvar = $("btnSalvar");
+
+const listaDirigentes = $("listaDirigentes");
+const listaIncorporacao = $("listaIncorporacao");
+const listaDesenvolvimento = $("listaDesenvolvimento");
+const listaCarencia = $("listaCarencia");
+
+/** ======= Estado ======= */
+let feriadosSet = new Set(); // YYYY-MM-DD
+let mediums = []; // {id,name,group_type}
+let marcacoes = new Map(); // medium_id -> status ("P","M","F","PS", "")
+
+/** ======= Util ======= */
+function setPill(type, text) {
+  elStatusPill.classList.remove("pill-ok", "pill-err", "pill-warn");
+  if (type === "ok") elStatusPill.classList.add("pill-ok");
+  else if (type === "err") elStatusPill.classList.add("pill-err");
+  else elStatusPill.classList.add("pill-warn");
+  elStatusText.textContent = text;
 }
 
-function setConn(text, ok = true) {
-  const el = $("statusConn");
-  el.textContent = text;
-  el.style.borderColor = ok ? "rgba(32,209,122,.45)" : "rgba(255,75,75,.45)";
+function showErro(msg, detalhe) {
+  elMsgErro.style.display = "block";
+  elMsgErro.textContent = detalhe ? `${msg} — ${detalhe}` : msg;
+  console.error("[ERRO]", msg, detalhe || "");
 }
 
-function setMsg(text) {
-  $("statusMsg").textContent = text || "";
+function clearErro() {
+  elMsgErro.style.display = "none";
+  elMsgErro.textContent = "";
 }
 
-function todayISO() {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth()+1).padStart(2,"0");
-  const dd = String(d.getDate()).padStart(2,"0");
-  return `${yyyy}-${mm}-${dd}`;
+function setMsg(msg) {
+  elMsgTopo.textContent = msg || "";
 }
 
-// Para não dar bug de fuso: força horário BR
-function getDayBR(iso) {
-  const d = new Date(`${iso}T03:00:00`);
-  return d.getDay(); // 0 dom ... 2 ter
+function ymdFromInputDate(value) {
+  // value já vem YYYY-MM-DD do input date
+  return value || "";
 }
 
-/* =========================
-   LOADERS
-   ========================= */
+function isTuesday(ymd) {
+  const d = new Date(ymd + "T12:00:00"); // meio-dia para evitar bugs de fuso
+  return d.getDay() === 2; // 0 dom ... 2 ter
+}
 
-async function testarSelect() {
-  const { error } = await sb.from("mediums").select("id").limit(1);
-  if (error) throw error;
+/** ======= REST helper ======= */
+async function apiFetch(path, { method = "GET", body = null } = {}) {
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY ||
+      SUPABASE_URL.includes("COLE_AQUI") ||
+      SUPABASE_ANON_KEY.includes("COLE_AQUI")) {
+    throw new Error("Você não colou SUPABASE_URL e SUPABASE_ANON_KEY no app.js");
+  }
+
+  const url = `${SUPABASE_URL}${path}`;
+
+  const headers = {
+    "apikey": SUPABASE_ANON_KEY,
+    "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "Prefer": "return=representation",
+  };
+
+  const res = await fetch(url, {
+    method,
+    headers,
+    body: body ? JSON.stringify(body) : null,
+  });
+
+  const text = await res.text();
+  let data;
+  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+
+  if (!res.ok) {
+    const err = typeof data === "string" ? data : (data?.message || JSON.stringify(data));
+    throw new Error(`${res.status} ${res.statusText} — ${err}`);
+  }
+
+  return data;
+}
+
+/** ======= Carregamento inicial ======= */
+async function carregarFeriados() {
+  // tenta pegar tudo
+  const rows = await apiFetch(`/rest/v1/feriados?select=data`);
+  feriadosSet = new Set((rows || []).map(r => r.data)); // já vem YYYY-MM-DD
 }
 
 async function carregarMediums() {
-  const { data, error } = await sb.from("mediums").select("*").order("name", { ascending: true });
-  if (error) throw error;
-
-  mediums = (data || []).map(m => ({
-    ...m,
-    name: String(m.name || "").trim(),
-    active: m.active !== false
-  }));
+  const rows = await apiFetch(`/rest/v1/mediums?select=id,name,group_type&order=name.asc`);
+  mediums = rows || [];
 }
 
-async function carregarRotacao() {
-  const { data, error } = await sb.from("rotacao").select("*");
-  if (error) throw error;
-  rotacao = data || [];
+/** ======= Render ======= */
+function limparListas() {
+  listaDirigentes.innerHTML = "";
+  listaIncorporacao.innerHTML = "";
+  listaDesenvolvimento.innerHTML = "";
+  listaCarencia.innerHTML = "";
 }
 
-async function carregarFeriados() {
-  const { data, error } = await sb.from("feriados").select("*");
-  if (error) throw error;
-  feriados = data || [];
+function grupoContainer(group_type) {
+  const gt = (group_type || "").toLowerCase();
+  if (gt === "dirigente") return listaDirigentes;
+  if (gt === "incorporacao" || gt === "incorporação") return listaIncorporacao;
+  if (gt === "desenvolvimento") return listaDesenvolvimento;
+  if (gt === "carencia" || gt === "carência") return listaCarencia;
+  // fallback: joga em desenvolvimento
+  return listaDesenvolvimento;
 }
 
-function isFeriado(iso) {
-  return feriados.some(f => {
-    const v = f.data || f.date || f.dia;
-    return String(v || "").slice(0,10) === iso;
+function criarLinhaMedium(m) {
+  const row = document.createElement("div");
+  row.className = "row";
+
+  const name = document.createElement("div");
+  name.className = "name";
+  name.textContent = m.name;
+
+  const opts = document.createElement("div");
+  opts.className = "opts";
+
+  // opções oficiais
+  // "" = sem marcação, P, M, F, PS
+  const opcoes = ["", "P", "M", "F", "PS"];
+
+  opcoes.forEach((val) => {
+    const label = document.createElement("label");
+    label.className = "opt";
+
+    const input = document.createElement("input");
+    input.type = "radio";
+    input.name = `status_${m.id}`;
+    input.value = val;
+
+    // carência: não permite M nem PS (como você mesmo definiu)
+    const gt = (m.group_type || "").toLowerCase();
+    if (gt === "carencia" || gt === "carência") {
+      if (val === "M" || val === "PS") input.disabled = true;
+    }
+
+    const span = document.createElement("span");
+    span.textContent = val === "" ? " " : val;
+
+    // marca se já tem no estado
+    const atual = marcacoes.get(m.id) || "";
+    if (atual === val) input.checked = true;
+
+    input.addEventListener("change", () => {
+      marcacoes.set(m.id, val);
+    });
+
+    label.appendChild(input);
+    label.appendChild(span);
+    opts.appendChild(label);
+  });
+
+  row.appendChild(name);
+  row.appendChild(opts);
+  return row;
+}
+
+function renderMediums() {
+  limparListas();
+
+  // sempre mantém a ordem por nome (já vem do SQL)
+  mediums.forEach(m => {
+    const container = grupoContainer(m.group_type);
+    container.appendChild(criarLinhaMedium(m));
   });
 }
 
-/* =========================
-   ROTAÇÃO (dirigente mesa/ps)
-   ========================= */
-
-function getRotRow(groupType) {
-  return rotacao.find(r => r.group_type === groupType) || null;
+/** ======= Data / chamada ======= */
+async function carregarMarcacoesDaData(ymd) {
+  // busca chamada do dia e aplica no map
+  const rows = await apiFetch(`/rest/v1/chamadas?select=medium_id,status&data=eq.${encodeURIComponent(ymd)}`);
+  marcacoes.clear();
+  (rows || []).forEach(r => {
+    marcacoes.set(r.medium_id, r.status || "");
+  });
 }
 
-function rotKeysForGroup(row) {
-  const keys = Object.keys(row || {});
-  const pick = (cands) => cands.find(k => keys.includes(k)) || null;
+function validarData(ymd) {
+  if (!ymd) return { ok:false, msg:"Selecione uma data." };
 
-  // tenta várias possibilidades (pra não depender do schema exato)
-  const mesaKey = pick(["last_mesa_id","last_medium_id","last_id","last"]);
-  const psKey   = pick(["last_ps_id","last_psicografia_id","last_psico_id","last_ps","last_psicografia"]);
-
-  return { mesaKey, psKey };
-}
-
-function nextFromRotation(list, lastId) {
-  if (!list.length) return null;
-  if (!lastId) return list[0].id;
-
-  const idx = list.findIndex(m => m.id === lastId);
-  if (idx === -1) return list[0].id;
-  return list[(idx + 1) % list.length].id;
-}
-
-function computeNextDirigentes() {
-  const dirigentes = mediums
-    .filter(m => m.active)
-    .filter(m => m.group_type === "dirigente")
-    .sort((a,b)=> String(a.name).localeCompare(String(b.name), "pt-BR"));
-
-  const rot = getRotRow("dirigente") || {};
-  const { mesaKey, psKey } = rotKeysForGroup(rot);
-
-  const lastMesa = mesaKey ? rot[mesaKey] : null;
-  const lastPs   = psKey ? rot[psKey] : null;
-
-  return {
-    dirigentes,
-    mesaKey,
-    psKey,
-    nextMesaId: nextFromRotation(dirigentes, lastMesa),
-    nextPsId: nextFromRotation(dirigentes, lastPs),
-  };
-}
-
-/* =========================
-   UI: DATA
-   ========================= */
-
-async function verificarDataUI() {
-  const iso = $("dataChamada").value;
-  const aviso = $("avisoData");
-  aviso.textContent = "";
-
-  if (!iso) { aviso.textContent = "Selecione uma data."; return false; }
-  if (getDayBR(iso) !== 2) { aviso.textContent = "❌ Chamada só pode ser feita em TERÇA-FEIRA."; return false; }
-
-  try {
-    await carregarFeriados();
-  } catch (e) {
-    aviso.textContent = "⚠️ Falha ao consultar feriados (verifique policy SELECT em feriados).";
-    return true; // não bloqueia
+  if (!isTuesday(ymd)) {
+    return { ok:false, msg:"Data inválida: a reunião é terça-feira." };
   }
 
-  if (isFeriado(iso)) { aviso.textContent = "❌ Hoje é feriado! Chamada não permitida."; return false; }
+  if (feriadosSet.has(ymd)) {
+    return { ok:false, msg:"Data inválida: é feriado cadastrado." };
+  }
 
-  aviso.textContent = "✅ Data válida.";
-  return true;
+  return { ok:true, msg:"Data válida." };
 }
 
-/* =========================
-   UI: RENDER
-   ========================= */
+async function verificarData() {
+  clearErro();
+  setMsg("");
 
-function pctFalta(m) {
-  const f = Number(m.faltas || 0);
-  const p = Number(m.presencas || 0);
-  const t = f + p;
-  if (!t) return 0;
-  return Math.round((f * 100) / t);
-}
-
-function makeRadio(name, value, label) {
-  const id = `${name}_${value}_${Math.random().toString(16).slice(2)}`;
-  return `
-    <label class="r" for="${id}">
-      <input id="${id}" type="radio" name="${name}" value="${value}">
-      <span>${label}</span>
-    </label>
-  `;
-}
-
-function renderGrupo(divId, lista, opts) {
-  const el = $(divId);
-
-  if (!lista.length) {
-    el.innerHTML = `<div class="item"><div class="item__left"><div class="muted">Nenhum médium neste grupo.</div></div></div>`;
+  const ymd = ymdFromInputDate(elData.value);
+  const v = validarData(ymd);
+  if (!v.ok) {
+    setMsg(v.msg);
     return;
   }
 
-  const { groupType, nextMesaId, nextPsId } = opts;
+  setMsg(v.msg);
 
-  el.innerHTML = lista.map(m => {
-    const p = pctFalta(m);
-    const faltaAlta = p >= 30;
-
-    let radios = "";
-    if (groupType === "carencia") {
-      radios += makeRadio(`st_${m.id}`, "P", "P");
-      radios += makeRadio(`st_${m.id}`, "F", "F");
-    } else if (groupType === "dirigente") {
-      radios += makeRadio(`st_${m.id}`, "P", "P");
-      radios += makeRadio(`st_${m.id}`, "M", "M");
-      radios += makeRadio(`st_${m.id}`, "F", "F");
-      radios += makeRadio(`st_${m.id}`, "PS", "PS");
-    } else {
-      radios += makeRadio(`st_${m.id}`, "P", "P");
-      radios += makeRadio(`st_${m.id}`, "M", "M");
-      radios += makeRadio(`st_${m.id}`, "F", "F");
-    }
-
-    let cls = "item";
-    let tag = "";
-
-    if (groupType === "dirigente") {
-      const isMesa = m.id === nextMesaId;
-      const isPs = m.id === nextPsId;
-
-      if (isMesa && isPs) cls += " nextBoth";
-      else if (isMesa) cls += " nextMesa";
-      else if (isPs) cls += " nextPs";
-
-      if (isMesa) tag += `<span class="tagNext">PRÓXIMO (MESA)</span>`;
-      if (isPs) tag += `<span class="tagNext">PRÓXIMO (PS)</span>`;
-    }
-
-    return `
-      <div class="${cls}">
-        <div class="item__left">
-          <div class="item__name">
-            ${escapeHtml(m.name)}
-            <span class="badge ${faltaAlta ? "badge--danger":""}">${p}% faltas</span>
-          </div>
-        </div>
-        <div class="item__radios">${radios}</div>
-        <div class="item__right">${tag}</div>
-      </div>
-    `;
-  }).join("");
-}
-
-function renderChamada() {
-  const ativos = mediums.filter(m => m.active);
-
-  const { dirigentes, nextMesaId, nextPsId } = computeNextDirigentes();
-  const incorporacao = ativos.filter(m => m.group_type === "incorporacao");
-  const desenvolvimento = ativos.filter(m => m.group_type === "desenvolvimento");
-  const carencia = ativos.filter(m => m.group_type === "carencia");
-
-  renderGrupo("listaDirigentes", dirigentes, { groupType: "dirigente", nextMesaId, nextPsId });
-  renderGrupo("listaIncorporacao", incorporacao, { groupType: "incorporacao" });
-  renderGrupo("listaDesenvolvimento", desenvolvimento, { groupType: "desenvolvimento" });
-  renderGrupo("listaCarencia", carencia, { groupType: "carencia" });
-}
-
-/* =========================
-   SALVAR CHAMADA
-   ========================= */
-
-function selectedStatusFor(id) {
-  const el = document.querySelector(`input[name="st_${id}"]:checked`);
-  return el ? el.value : null;
+  // carrega marcações existentes e re-render para “pintar” radios
+  try {
+    await carregarMarcacoesDaData(ymd);
+    renderMediums();
+  } catch (e) {
+    showErro("Falha ao carregar marcações dessa data", e.message);
+  }
 }
 
 async function salvarChamada() {
-  $("resultadoSalvar").textContent = "";
+  clearErro();
+  setMsg("");
 
-  const ok = await verificarDataUI();
-  if (!ok) { $("resultadoSalvar").textContent = "Corrija a data antes de salvar."; return; }
-
-  const iso = $("dataChamada").value;
-
-  const registros = [];
-  for (const m of mediums.filter(x => x.active)) {
-    const st = selectedStatusFor(m.id);
-    if (!st) continue;
-    registros.push({ medium_id: m.id, data: iso, status: st });
-  }
-
-  if (!registros.length) { $("resultadoSalvar").textContent = "Nenhuma presença marcada."; return; }
-
-  // 1) INSERT chamadas
-  const { error: errIns } = await sb.from("chamadas").insert(registros);
-  if (errIns) {
-    $("resultadoSalvar").textContent = `❌ Erro ao salvar chamadas: ${errIns.message}`;
+  const ymd = ymdFromInputDate(elData.value);
+  const v = validarData(ymd);
+  if (!v.ok) {
+    setMsg(v.msg);
     return;
   }
 
-  // 2) update presencas/faltas (PS conta como presença)
-  for (const r of registros) {
-    const m = mediums.find(x => x.id === r.medium_id);
-    const pres = Number(m?.presencas || 0) + (r.status === "F" ? 0 : 1);
-    const falt = Number(m?.faltas || 0) + (r.status === "F" ? 1 : 0);
-
-    const { error: eUp } = await sb.from("mediums").update({ presencas: pres, faltas: falt }).eq("id", r.medium_id);
-    if (eUp) {
-      $("resultadoSalvar").textContent = `⚠️ Chamadas salvas, mas não consegui atualizar estatísticas (RLS): ${eUp.message}`;
-      break;
+  // monta payload apenas com quem tem status marcado (não-vazio)
+  const linhas = [];
+  for (const m of mediums) {
+    const st = (marcacoes.get(m.id) || "").trim();
+    if (st) {
+      linhas.push({
+        medium_id: m.id,
+        data: ymd,
+        status: st
+      });
     }
   }
 
-  // 3) tentativa de atualizar rotação (se permitido)
   try {
-    await carregarRotacao();
-    const { mesaKey, psKey } = rotKeysForGroup(getRotRow("dirigente") || {});
-    const rotRow = getRotRow("dirigente");
+    // estratégia “sem dor de cabeça”:
+    // 1) apaga tudo do dia
+    // 2) insere tudo de novo
+    await apiFetch(`/rest/v1/chamadas?data=eq.${encodeURIComponent(ymd)}`, { method: "DELETE" });
 
-    let marcouMesaId = null;
-    let marcouPsId = null;
-
-    const idsDir = new Set(mediums.filter(m=>m.active && m.group_type==="dirigente").map(m=>m.id));
-    for (const r of registros) {
-      if (!idsDir.has(r.medium_id)) continue;
-      if (r.status === "M") marcouMesaId = r.medium_id;
-      if (r.status === "PS") marcouPsId = r.medium_id;
+    if (linhas.length > 0) {
+      await apiFetch(`/rest/v1/chamadas`, { method: "POST", body: linhas });
     }
 
-    if (rotRow && (marcouMesaId || marcouPsId)) {
-      const payload = {};
-      if (mesaKey && marcouMesaId) payload[mesaKey] = marcouMesaId;
-      if (psKey && marcouPsId) payload[psKey] = marcouPsId;
-
-      if (Object.keys(payload).length) {
-        const { error: eRot } = await sb.from("rotacao").update(payload).eq("group_type", "dirigente");
-        if (eRot) {
-          $("resultadoSalvar").textContent = `⚠️ Chamadas salvas, mas rotação não atualizou (RLS): ${eRot.message}`;
-        }
-      }
-    }
-  } catch {}
-
-  await carregarTudo();
-  $("resultadoSalvar").textContent = "✅ Chamada registrada!";
-}
-
-/* =========================
-   PARTICIPANTES (admin)
-   ========================= */
-
-function groupLabel(g) {
-  if (g === "dirigente") return "Dirigente";
-  if (g === "incorporacao") return "Incorporação";
-  if (g === "desenvolvimento") return "Desenvolvimento";
-  if (g === "carencia") return "Carência";
-  return g;
-}
-
-function renderAdminList() {
-  const q = ($("busca").value || "").toLowerCase().trim();
-
-  const list = mediums
-    .slice()
-    .sort((a,b)=> String(a.name).localeCompare(String(b.name), "pt-BR"))
-    .filter(m => !q || String(m.name).toLowerCase().includes(q));
-
-  const el = $("listaAdmin");
-  el.innerHTML = list.map(m => `
-    <div class="adminRow">
-      <div>
-        <div style="font-weight:950">${escapeHtml(m.name)}</div>
-        <small>${groupLabel(m.group_type)}</small>
-      </div>
-      <div class="switch">
-        <span>Ativo</span>
-        <input type="checkbox" ${m.active ? "checked":""} data-act="${m.id}">
-      </div>
-      <div class="adminActions">
-        <button class="btnMini" data-edit="${m.id}">Editar</button>
-        <button class="btnMini btnMini--danger" data-del="${m.id}">Excluir</button>
-      </div>
-    </div>
-  `).join("");
-
-  el.querySelectorAll("input[data-act]").forEach(chk => {
-    chk.addEventListener("change", async (e) => {
-      const id = e.target.getAttribute("data-act");
-      const active = e.target.checked;
-      await updateMedium(id, { active });
-    });
-  });
-
-  el.querySelectorAll("button[data-edit]").forEach(btn => {
-    btn.addEventListener("click", async (e) => {
-      const id = e.target.getAttribute("data-edit");
-      await editarMediumPrompt(id);
-    });
-  });
-
-  el.querySelectorAll("button[data-del]").forEach(btn => {
-    btn.addEventListener("click", async (e) => {
-      const id = e.target.getAttribute("data-del");
-      if (!confirm("Excluir este participante?")) return;
-      await deleteMedium(id);
-    });
-  });
-}
-
-async function updateMedium(id, patch) {
-  $("msgAdmin").textContent = "";
-  try {
-    const { error } = await sb.from("mediums").update(patch).eq("id", id);
-    if (error) throw error;
-    await carregarTudo();
-    $("msgAdmin").textContent = "✅ Atualizado.";
+    setMsg("Chamada salva com sucesso.");
   } catch (e) {
-    $("msgAdmin").textContent = `❌ Sem permissão (RLS) ou erro: ${e.message}`;
+    showErro("Falha ao salvar chamada", e.message);
   }
 }
 
-async function deleteMedium(id) {
-  $("msgAdmin").textContent = "";
+/** ======= Boot ======= */
+async function init() {
   try {
-    const { error } = await sb.from("mediums").delete().eq("id", id);
-    if (error) throw error;
-    await carregarTudo();
-    $("msgAdmin").textContent = "✅ Excluído.";
+    setPill("warn", "Conectando...");
+    clearErro();
+    setMsg("");
+
+    // carrega dados básicos
+    await carregarFeriados();
+    await carregarMediums();
+
+    // render base
+    renderMediums();
+
+    setPill("ok", "Conectado ✅");
+    setMsg("Pronto");
+
   } catch (e) {
-    $("msgAdmin").textContent = `❌ Sem permissão (RLS) ou erro: ${e.message}`;
+    setPill("err", "Erro");
+    showErro("Não conectou no Supabase", e.message);
   }
 }
 
-async function editarMediumPrompt(id) {
-  const m = mediums.find(x => x.id === id);
-  if (!m) return;
+btnVerificar.addEventListener("click", verificarData);
+btnSalvar.addEventListener("click", salvarChamada);
 
-  const novoNome = prompt("Nome:", m.name);
-  if (novoNome === null) return;
-
-  const novoGrupo = prompt("Grupo (dirigente/incorporacao/desenvolvimento/carencia):", m.group_type);
-  if (novoGrupo === null) return;
-
-  await updateMedium(id, { name: novoNome.trim(), group_type: novoGrupo.trim() });
-}
-
-async function adicionarParticipante() {
-  $("msgAdmin").textContent = "";
-
-  const name = ($("novoNome").value || "").trim();
-  const group_type = $("novoGrupo").value;
-
-  if (!name) { $("msgAdmin").textContent = "Informe o nome."; return; }
-
-  try {
-    const payload = { name, group_type, active: true, faltas: 0, presencas: 0 };
-    const { error } = await sb.from("mediums").insert(payload);
-    if (error) throw error;
-
-    $("novoNome").value = "";
-    await carregarTudo();
-    $("msgAdmin").textContent = "✅ Adicionado.";
-  } catch (e) {
-    $("msgAdmin").textContent = `❌ Sem permissão (RLS) ou erro: ${e.message}`;
-  }
-}
-
-/* =========================
-   ABAS + BOOT
-   ========================= */
-
-function showTab(which) {
-  const isChamada = which === "chamada";
-  $("abaChamada").classList.toggle("hidden", !isChamada);
-  $("abaParticipantes").classList.toggle("hidden", isChamada);
-  $("btnTabChamada").classList.toggle("chip--active", isChamada);
-  $("btnTabParticipantes").classList.toggle("chip--active", !isChamada);
-}
-
-async function carregarTudo() {
-  setConn("Carregando…", true);
-  setMsg("");
-
-  await carregarMediums();
-  await carregarRotacao();
-
-  renderChamada();
-  renderAdminList();
-
-  // informa modo admin (se RLS bloquear)
-  $("statusAdmin").textContent =
-    "Se ações de editar/adicionar/excluir derem erro, é porque o banco está com RLS permitindo só SELECT para anon.";
-
-  setConn("Conectado ✅", true);
-}
-
-window.addEventListener("DOMContentLoaded", async () => {
-  try {
-    if (!window.supabase || !window.supabase.createClient) {
-      setConn("❌ supabase-js não carregou", false);
-      setMsg("Verifique o script do supabase-js no index.html (deve vir antes do app.js).");
-      return;
-    }
-
-    const URL = window.__SUPABASE_URL__;
-    const KEY = window.__SUPABASE_ANON_KEY__;
-    sb = window.supabase.createClient(URL, KEY);
-
-    $("dataChamada").value = todayISO();
-    $("btnVerificarData").addEventListener("click", verificarDataUI);
-    $("btnSalvar").addEventListener("click", salvarChamada);
-
-    $("btnTabChamada").addEventListener("click", () => showTab("chamada"));
-    $("btnTabParticipantes").addEventListener("click", () => showTab("participantes"));
-
-    $("busca").addEventListener("input", renderAdminList);
-    $("btnAdicionar").addEventListener("click", adicionarParticipante);
-
-    setConn("Testando conexão…", true);
-    await testarSelect();
-
-    await carregarTudo();
-  } catch (e) {
-    setConn("❌ Erro ao conectar", false);
-    setMsg(e?.message || String(e));
-    console.error(e);
-  }
-});
+init();

@@ -2,66 +2,61 @@
 <html lang="pt-br">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Chamada de Médiuns</title>
-  <link rel="stylesheet" href="./style.css" />
+  <link rel="stylesheet" href="style.css" />
 </head>
-
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="./app.js" defer></script>
-
 <body>
-  <!-- Mantive ids simples e estáveis. Se o seu style.css já estiliza classes/estrutura,
-       ele vai continuar mandando no visual. -->
-
-  <main class="container">
+  <main class="wrap">
     <header class="hero">
       <h1>Chamada de Médiuns</h1>
-      <p>Reunião: terça-feira 18:30 (exceto feriados)</p>
+      <p class="sub">Reunião: terça-feira 18:30 (exceto feriados)</p>
+
+      <section class="card">
+        <div class="statusRow">
+          <div id="statusPill" class="pill pill-warn">
+            <span class="dot"></span>
+            <span id="statusText">Conectando...</span>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="dataChamada">Data da chamada</label>
+          <input id="dataChamada" type="date" />
+        </div>
+
+        <div class="btnRow">
+          <button id="btnVerificar" class="btn">Verificar data</button>
+          <button id="btnSalvar" class="btn btn-primary">Salvar chamada</button>
+        </div>
+
+        <p id="msgTopo" class="msg"></p>
+        <p id="msgErro" class="msg msg-erro" style="display:none;"></p>
+      </section>
     </header>
-
-    <section class="card">
-      <div id="statusConexao" class="status">Conectando...</div>
-
-      <div class="field">
-        <label>Data da chamada</label>
-        <input id="dataChamada" type="date" />
-      </div>
-
-      <div class="actions">
-        <button id="btnVerificarData" type="button">Verificar data</button>
-        <button id="btnSalvarChamada" type="button">Salvar chamada</button>
-      </div>
-
-      <div id="mensagemTopo" class="msg"></div>
-      <div id="resultadoSalvar" class="msg"></div>
-    </section>
 
     <section class="section">
       <h2>Dirigentes</h2>
-      <div id="listaDirigentes" class="lista"></div>
+      <div id="listaDirigentes" class="list"></div>
     </section>
 
     <section class="section">
       <h2>Médiuns de Incorporação</h2>
-      <div id="listaIncorporacao" class="lista"></div>
+      <div id="listaIncorporacao" class="list"></div>
     </section>
 
     <section class="section">
       <h2>Médiuns em Desenvolvimento</h2>
-      <div id="listaDesenvolvimento" class="lista"></div>
+      <div id="listaDesenvolvimento" class="list"></div>
     </section>
 
     <section class="section">
       <h2>Médiuns em Carência</h2>
-      <div id="listaCarencia" class="lista"></div>
+      <div id="listaCarencia" class="list"></div>
+      <p class="hint">Carência não senta na mesa (somente P/F).</p>
     </section>
   </main>
 
-  <!-- 1) Supabase JS PRIMEIRO (UMD) -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
-
-  <!-- 2) app.js DEPOIS (com cache-busting) -->
-  <script src="./app.js?v=1"></script>
+  <script src="app.js"></script>
 </body>
 </html>
