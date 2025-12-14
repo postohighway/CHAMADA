@@ -2,61 +2,54 @@
 <html lang="pt-br">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Chamada de Médiuns</title>
   <link rel="stylesheet" href="style.css" />
 </head>
+
 <body>
-  <main class="wrap">
-    <header class="hero">
-      <h1>Chamada de Médiuns</h1>
-      <p class="sub">Reunião: terça-feira 18:30 (exceto feriados)</p>
+  <main class="container">
+    <h1>Chamada de Médiuns</h1>
+    <p class="sub">Reunião: terça-feira 18:30 (exceto feriados)</p>
 
-      <section class="card">
-        <div class="statusRow">
-          <div id="statusPill" class="pill pill-warn">
-            <span class="dot"></span>
-            <span id="statusText">Conectando...</span>
-          </div>
+    <section class="card">
+      <div class="status-row">
+        <div id="statusPill" class="pill ok">
+          <span id="statusText">Conectado</span>
         </div>
+        <div id="msgTopo" class="msg-topo"></div>
+      </div>
 
+      <div class="form-row">
         <div class="field">
           <label for="dataChamada">Data da chamada</label>
-          <input id="dataChamada" type="date" />
+          <input id="dataChamada" type="text" placeholder="dd/mm/aaaa" />
         </div>
 
-        <div class="btnRow">
-          <button id="btnVerificar" class="btn">Verificar data</button>
-          <button id="btnSalvar" class="btn btn-primary">Salvar chamada</button>
+        <div class="actions">
+          <button id="btnVerificar" type="button" class="btn">Verificar data</button>
+          <button id="btnSalvar" type="button" class="btn btn-primary">Salvar chamada</button>
         </div>
+      </div>
 
-        <p id="msgTopo" class="msg"></p>
-        <p id="msgErro" class="msg msg-erro" style="display:none;"></p>
-      </section>
-    </header>
-
-    <section class="section">
-      <h2>Dirigentes</h2>
-      <div id="listaDirigentes" class="list"></div>
+      <div id="msgErro" class="msg-erro"></div>
+      <div class="msg-rodape" id="msgRodape">Pronto</div>
     </section>
 
-    <section class="section">
-      <h2>Médiuns de Incorporação</h2>
-      <div id="listaIncorporacao" class="list"></div>
-    </section>
+    <h2>Dirigentes</h2>
+    <div id="listaDirigentes" class="lista"></div>
 
-    <section class="section">
-      <h2>Médiuns em Desenvolvimento</h2>
-      <div id="listaDesenvolvimento" class="list"></div>
-    </section>
+    <h2>Médiuns de Incorporação</h2>
+    <div id="listaIncorporacao" class="lista"></div>
 
-    <section class="section">
-      <h2>Médiuns em Carência</h2>
-      <div id="listaCarencia" class="list"></div>
-      <p class="hint">Carência não senta na mesa (somente P/F).</p>
-    </section>
+    <h2>Médiuns em Desenvolvimento</h2>
+    <div id="listaDesenvolvimento" class="lista"></div>
+
+    <h2>Médiuns em Carência</h2>
+    <div id="listaCarencia" class="lista"></div>
   </main>
 
+  <!-- MUITO IMPORTANTE: carregar o app.js no final -->
   <script src="app.js"></script>
 </body>
 </html>
