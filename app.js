@@ -1,56 +1,61 @@
 (() => {
-  // ===== COLE AQUI =====
+  // ==========================
+  // CONFIG (COLE AQUI)
+  // ==========================
   const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co"
   const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5vdXp6eXJldnlrZG1ucWlmamp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUzOTYzMDIsImV4cCI6MjA4MDk3MjMwMn0.s2OzeSXe7CrKDNl6fXkTcMj_Vgitod0l0h0BiJA79nc";
 
-  // ===== DOM =====
+  // Valores esperados em mediuns.group_type
+  const GROUPS = [
+    { key: "dirigentes", el: "list_dirigentes", label: "Dirigentes", allowM: true },
+    { key: "incorporacao", el: "list_incorporacao", label: "Incorporação", allowM: true },
+    { key: "desenvolvimento", el: "list_desenvolvimento", label: "Desenvolvimento", allowM: true },
+    { key: "carencia", el: "list_carencia", label: "Carência", allowM: false }, // só P/F
+  ];
+
+  const TIMEOUT_MS = 12000;
+
+  // ==========================
+  // DOM
+  // ==========================
   const $ = (id) => document.getElementById(id);
-  const pillConn = $("pillConn");
-  const dt = $("dt");
-  const group = $("group");
-  const onlyActive = $("onlyActive");
-  const btnLoad = $("btnLoad");
-  const btnSave = $("btnSave");
-  const tbody = $("tbody");
+  const dotConn = $("dotConn");
+  const txtConn = $("txtConn");
   const msg = $("msg");
-  const logEl = $("log");
+  const dt = $("dt");
+  const btnVerificar = $("btnVerificar");
+  const btnSalvar = $("btnSalvar");
 
-  // ===== STATE =====
+  // ==========================
+  // STATE
+  // ==========================
   let sb = null;
-  let currentList = [];
   let currentDate = "";
-  let currentGroup = "";
+  // statusState[medium_id] = "P"|"M"|"F"|"" (vazio = não marcado)
+  const statusState = new Map();
+  // mediumsByGroup[key] = [{id,name}]
+  const mediumsByGroup = new Map();
 
-  // ===== UTIL =====
-  function now() {
-    const d = new Date();
-    return d.toLocaleTimeString();
-  }
-  function log(line) {
-    logEl.textContent += `[${now()}] ${line}\n`;
-  }
-  function setPill(text, ok = true) {
-    pillConn.textContent = text;
-    pillConn.style.borderColor = ok ? "#cfeee3" : "#f2c9c9";
-    pillConn.style.color = ok ? "#0a7" : "#c22";
-  }
-  function setMsg(text, type = "ok") {
-    msg.textContent = text || "";
-    msg.className = "statusline " + (type === "err" ? "err" : "ok");
-  }
-  function todayISO() {
-    const d = new Date();
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, "0");
-    const dd = String(d.getDate()).padStart(2, "0");
-    return `${yyyy}-${mm}-${dd}`;
+  // ==========================
+  // UTILS
+  // ==========================
+  function setConn(state, text) {
+    // state: "idle" | "ok" | "err" | "wait"
+    dotConn.classList.remove("ok", "err");
+    if (state === "ok") dotConn.classList.add("ok");
+    if (state === "err") dotConn.classList.add("err");
+    txtConn.textContent = text;
   }
 
-  // Timeout REAL (mata o “carregando infinito”)
-  async function withTimeout(promise, ms, label) {
+  function setMsg(text, isErr = false) {
+    msg.style.color = isErr ? "var(--red)" : "var(--muted)";
+    msg.textContent = text;
+  }
+
+  async function withTimeout(promise, label) {
     let t;
     const timeout = new Promise((_, rej) => {
-      t = setTimeout(() => rej(new Error(`Timeout em ${ms}ms (${label})`)), ms);
+      t = setTimeout(() => rej(new Error(`Timeout (${label})`)), TIMEOUT_MS);
     });
     try {
       return await Promise.race([promise, timeout]);
@@ -67,62 +72,122 @@
       throw new Error("Falta SUPABASE_ANON_KEY (pública) no app.js");
     }
     if (!window.supabase?.createClient) {
-      throw new Error("Supabase JS não carregou (CDN). Verifique internet / bloqueador / script.");
+      throw new Error("Supabase JS não carregou (CDN).");
     }
   }
 
-  function renderList(list) {
-    tbody.innerHTML = "";
+  function todayISO() {
+    const d = new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  // ==========================
+  // RENDER
+  // ==========================
+  function renderAll() {
+    for (const g of GROUPS) renderGroup(g);
+    btnSalvar.disabled = !currentDate; // só habilita após verificar
+  }
+
+  function renderGroup(groupMeta) {
+    const container = $(groupMeta.el);
+    container.innerHTML = "";
+
+    const list = mediumsByGroup.get(groupMeta.key) || [];
     if (!list.length) {
-      tbody.innerHTML = `<tr><td colspan="3" class="muted">Nenhum médium encontrado.</td></tr>`;
-      btnSave.disabled = true;
+      const empty = document.createElement("div");
+      empty.className = "small";
+      empty.textContent = "Nenhum médium encontrado.";
+      container.appendChild(empty);
       return;
     }
-    list.forEach((m, i) => {
-      const tr = document.createElement("tr");
-      tr.dataset.mid = m.id;
-      tr.innerHTML = `
-        <td>${i + 1}</td>
-        <td>${m.name}</td>
-        <td>
-          <select>
-            <option value="">—</option>
-            <option value="P">P</option>
-            <option value="M">M</option>
-            <option value="F">F</option>
-          </select>
-        </td>
-      `;
-      tbody.appendChild(tr);
-    });
-    btnSave.disabled = false;
+
+    for (const m of list) {
+      const item = document.createElement("div");
+      item.className = "item";
+
+      const left = document.createElement("div");
+      left.innerHTML = `<div class="name">${escapeHtml(m.name)}</div>`;
+
+      const right = document.createElement("div");
+      right.className = "seg";
+
+      const st = statusState.get(m.id) || "";
+
+      const bP = mkBtn("P", st === "P", false, () => setStatus(m.id, "P"));
+      const bM = mkBtn("M", st === "M", !groupMeta.allowM, () => setStatus(m.id, "M"));
+      const bF = mkBtn("F", st === "F", false, () => setStatus(m.id, "F"));
+
+      right.appendChild(bP);
+      right.appendChild(bM);
+      right.appendChild(bF);
+
+      item.appendChild(left);
+      item.appendChild(right);
+      container.appendChild(item);
+    }
   }
 
-  async function loadMediuns(groupType, activeOnly) {
-    log(`Consultando mediuns (group_type=${groupType}, activeOnly=${activeOnly})…`);
+  function mkBtn(label, active, disabled, onClick) {
+    const b = document.createElement("button");
+    b.textContent = label;
+    if (active) b.classList.add("active");
+    if (disabled) b.classList.add("disabled");
+    b.disabled = disabled;
+    b.addEventListener("click", onClick);
+    return b;
+  }
 
-    let q = sb
+  function setStatus(mediumId, status) {
+    // toggle: se clicar no mesmo, limpa
+    const cur = statusState.get(mediumId) || "";
+    statusState.set(mediumId, cur === status ? "" : status);
+    // re-render só o grupo inteiro (simples e estável)
+    renderAll();
+  }
+
+  function escapeHtml(s) {
+    return String(s)
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;")
+      .replaceAll('"', "&quot;")
+      .replaceAll("'", "&#039;");
+  }
+
+  // ==========================
+  // SUPABASE DATA
+  // ==========================
+  async function testConnection() {
+    // Teste simples: select 1 da tabela mediuns (não usa auth)
+    const q = sb.from("mediuns").select("id").limit(1);
+    const res = await withTimeout(q, "testConnection");
+    if (res.error) throw res.error;
+  }
+
+  async function loadMediunsForGroup(groupKey) {
+    const q = sb
       .from("mediuns")
       .select("id,name,group_type,active")
-      .eq("group_type", groupType)
+      .eq("group_type", groupKey)
+      .eq("active", true)
       .order("name", { ascending: true });
 
-    if (activeOnly) q = q.eq("active", true);
-
-    const res = await withTimeout(q, 12000, "loadMediuns");
+    const res = await withTimeout(q, `loadMediuns:${groupKey}`);
     if (res.error) throw res.error;
     return res.data || [];
   }
 
-  async function loadChamadas(dateISO) {
-    log(`Consultando chamadas (date=${dateISO})…`);
-
+  async function loadChamadasForDate(dateISO) {
     const q = sb
       .from("chamadas")
       .select("medium_id,status,date")
       .eq("date", dateISO);
 
-    const res = await withTimeout(q, 12000, "loadChamadas");
+    const res = await withTimeout(q, "loadChamadas");
     if (res.error) throw res.error;
 
     const map = new Map();
@@ -130,132 +195,105 @@
     return map;
   }
 
-  async function applyChamadas(map) {
-    let marked = 0;
-    for (const tr of tbody.querySelectorAll("tr[data-mid]")) {
-      const mid = tr.dataset.mid;
-      const sel = tr.querySelector("select");
-      const st = map.get(mid) || "";
-      sel.value = st;
-      if (st) marked++;
+  async function saveChamadas(dateISO) {
+    const rows = [];
+    for (const [medium_id, status] of statusState.entries()) {
+      if (!status) continue;
+      rows.push({ medium_id, date: dateISO, status });
     }
-    log(`Chamada aplicada na tela. Marcados: ${marked}`);
+    if (!rows.length) return 0;
+
+    // precisa ter UNIQUE (medium_id, date) para onConflict funcionar bem
+    const q = sb.from("chamadas").upsert(rows, { onConflict: "medium_id,date" });
+    const res = await withTimeout(q, "saveChamadas");
+    if (res.error) throw res.error;
+    return rows.length;
   }
 
-  async function doLoad() {
-    btnLoad.disabled = true;
-    btnSave.disabled = true;
-
-    currentDate = dt.value;
-    currentGroup = group.value;
-    const activeOnly = onlyActive.value === "1";
-
-    setMsg("Carregando…", "ok");
-    log("=== INÍCIO LOAD ===");
+  // ==========================
+  // ACTIONS
+  // ==========================
+  async function onVerificar() {
+    btnVerificar.disabled = true;
+    btnSalvar.disabled = true;
+    setConn("wait", "Conectando...");
+    setMsg("Verificando conexão e carregando listas...");
 
     try {
-      // teste de conexão “simples”: buscar 1 linha da tabela mediuns (não depende de auth)
-      log("Teste rápido de conexão…");
-      const test = await withTimeout(
-        sb.from("mediuns").select("id").limit(1),
-        12000,
-        "testConnection"
-      );
-      if (test.error) throw test.error;
-      log("Conexão OK (mediuns limit 1).");
+      currentDate = dt.value;
+      if (!currentDate) throw new Error("Selecione uma data.");
 
-      const list = await loadMediuns(currentGroup, activeOnly);
-      currentList = list;
-      renderList(list);
+      await testConnection();
+      setConn("ok", "Conectado");
 
-      const callsMap = await loadChamadas(currentDate);
-      await applyChamadas(callsMap);
+      // Carrega mediuns por grupo
+      for (const g of GROUPS) {
+        const list = await loadMediunsForGroup(g.key);
+        mediumsByGroup.set(g.key, list);
+      }
 
-      setMsg(`OK. Carregados: ${list.length}`, "ok");
-      setPill("Conectado", true);
+      // Carrega chamadas do dia e aplica
+      statusState.clear();
+      const calls = await loadChamadasForDate(currentDate);
+      for (const [mid, st] of calls.entries()) statusState.set(mid, st);
+
+      renderAll();
+      setMsg("Listas carregadas. Marque P/M/F e clique em Salvar chamada.");
+      btnSalvar.disabled = false;
     } catch (e) {
-      console.error(e);
-      setMsg(`ERRO AO CARREGAR: ${e.message || e}`, "err");
-      setPill("Erro", false);
-      log(`ERRO: ${e.message || e}`);
-      tbody.innerHTML = `<tr><td colspan="3" class="muted">Falhou ao carregar. Veja a mensagem/log acima.</td></tr>`;
+      setConn("err", "Erro");
+      setMsg(`Erro: ${e.message || e}`, true);
     } finally {
-      btnLoad.disabled = false;
-      btnSave.disabled = currentList.length === 0;
-      log("=== FIM LOAD ===");
+      btnVerificar.disabled = false;
     }
   }
 
-  async function doSave() {
-    btnSave.disabled = true;
-    setMsg("Salvando…", "ok");
-    log("=== INÍCIO SAVE ===");
+  async function onSalvar() {
+    btnSalvar.disabled = true;
+    setMsg("Salvando...");
 
     try {
-      const rows = [];
-      for (const tr of tbody.querySelectorAll("tr[data-mid]")) {
-        const medium_id = tr.dataset.mid;
-        const status = tr.querySelector("select").value || "";
-        if (!status) continue;
-        rows.push({ medium_id, date: currentDate, status });
-      }
+      if (!currentDate) throw new Error("Clique em “Verificar data” antes de salvar.");
 
-      if (!rows.length) {
-        setMsg("Nada marcado para salvar.", "err");
-        log("Nada marcado.");
-        return;
-      }
-
-      log(`Upsert chamadas: ${rows.length} linhas…`);
-      const res = await withTimeout(
-        sb.from("chamadas").upsert(rows, { onConflict: "medium_id,date" }),
-        12000,
-        "saveChamadas"
-      );
-      if (res.error) throw res.error;
-
-      setMsg(`Salvo. Linhas: ${rows.length}`, "ok");
-      log("Salvou OK.");
+      const n = await saveChamadas(currentDate);
+      setMsg(n ? `Salvo com sucesso. Itens gravados: ${n}` : "Nada marcado para salvar.");
     } catch (e) {
-      console.error(e);
-      setMsg(`ERRO AO SALVAR: ${e.message || e}`, "err");
-      log(`ERRO: ${e.message || e}`);
+      setMsg(`Erro ao salvar: ${e.message || e}`, true);
     } finally {
-      btnSave.disabled = currentList.length === 0;
-      log("=== FIM SAVE ===");
+      btnSalvar.disabled = false;
     }
   }
 
+  // ==========================
+  // BOOT
+  // ==========================
   function boot() {
-    // Captura erros “silenciosos” (pra não ficar em “carregando”)
-    window.addEventListener("unhandledrejection", (ev) => {
-      log(`PROMISE REJECTION: ${ev.reason?.message || ev.reason}`);
-      setMsg(`Erro (promise): ${ev.reason?.message || ev.reason}`, "err");
-    });
-    window.addEventListener("error", (ev) => {
-      log(`JS ERROR: ${ev.message}`);
-      setMsg(`Erro JS: ${ev.message}`, "err");
-    });
-
     try {
       assertConfig();
-      sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-        auth: { persistSession: false }
-      });
+
+      // *** PONTO-CHAVE: SEM AUTH ***
+      sb = window.supabase.createClient(
+        SUPABASE_URL,
+        SUPABASE_ANON_KEY,
+        {
+          auth: {
+            persistSession: false,
+            autoRefreshToken: false,
+            detectSessionInUrl: false
+          }
+        }
+      );
 
       dt.value = todayISO();
-      setPill("Pronto", true);
-      setMsg("Pronto. Clique em Carregar.", "ok");
-      log("Boot OK.");
+      setConn("wait", "Pronto");
+      setMsg("Selecione a data e clique em “Verificar data”.");
     } catch (e) {
-      setPill("Config inválida", false);
-      setMsg(`CONFIG: ${e.message || e}`, "err");
-      log(`CONFIG ERROR: ${e.message || e}`);
+      setConn("err", "Config");
+      setMsg(`Config: ${e.message || e}`, true);
     }
   }
 
-  // eventos
+  btnVerificar.addEventListener("click", onVerificar);
+  btnSalvar.addEventListener("click", onSalvar);
   document.addEventListener("DOMContentLoaded", boot);
-  btnLoad.addEventListener("click", doLoad);
-  btnSave.addEventListener("click", doSave);
 })();
