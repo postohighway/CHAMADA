@@ -5,16 +5,18 @@
    - Tabelas: public.mediums, public.chamadas, public.feriados
    ========================================================= */
 
-const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co";
+/** ✅ COLE AQUI (APENAS ANON PUBLIC KEY) */
+const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co"; // ex: https://xxxx.supabase.co
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5vdXp6eXJldnlrZG1ucWlmamp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUzOTYzMDIsImV4cCI6MjA4MDk3MjMwMn0.s2OzeSXe7CrKDNl6fXkTcMj_Vgitod0l0h0BiJA79nc";
 
-/** ======= IDs UI ======= */
+/** ====== IDs UI ====== */
 const $ = (id) => document.getElementById(id);
 
 const elStatusPill = $("statusPill");
 const elStatusText = $("statusText");
 const elMsgTopo = $("msgTopo");
 const elMsgErro = $("msgErro");
+
 const elData = $("dataChamada");
 const btnVerificar = $("btnVerificar");
 const btnSalvar = $("btnSalvar");
@@ -24,288 +26,307 @@ const listaIncorporacao = $("listaIncorporacao");
 const listaDesenvolvimento = $("listaDesenvolvimento");
 const listaCarencia = $("listaCarencia");
 
-/** ======= Estado ======= */
-let feriadosSet = new Set(); // YYYY-MM-DD
-let mediums = []; // {id,name,group_type}
-let marcacoes = new Map(); // medium_id -> status ("P","M","F","PS", "")
+/** ====== Headers ====== */
+const headers = {
+  apikey: SUPABASE_ANON_KEY,
+  Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+  "Content-Type": "application/json",
+};
 
-/** ======= Util ======= */
-function setPill(type, text) {
-  elStatusPill.classList.remove("pill-ok", "pill-err", "pill-warn");
-  if (type === "ok") elStatusPill.classList.add("pill-ok");
-  else if (type === "err") elStatusPill.classList.add("pill-err");
-  else elStatusPill.classList.add("pill-warn");
-  elStatusText.textContent = text;
+/** ====== Estado ====== */
+let dataAtivaISO = null;           // YYYY-MM-DD
+let mediums = [];                  // lista do banco
+let marcacoes = new Map();         // medium_id -> status ("P","M","F","PS")
+
+/** ====== Helpers ====== */
+function setStatus(tipo, texto) {
+  // tipo: "ok" | "warn" | "err" | "load"
+  if (elStatusText) elStatusText.innerText = texto || "";
+
+  if (!elStatusPill) return;
+  elStatusPill.classList.remove("ok", "warn", "err", "load");
+
+  if (tipo) elStatusPill.classList.add(tipo);
 }
 
-function showErro(msg, detalhe) {
-  elMsgErro.style.display = "block";
-  elMsgErro.textContent = detalhe ? `${msg} — ${detalhe}` : msg;
-  console.error("[ERRO]", msg, detalhe || "");
+function setTopo(msg) {
+  if (elMsgTopo) elMsgTopo.innerText = msg || "";
+}
+function setErro(msg) {
+  if (elMsgErro) elMsgErro.innerText = msg || "";
 }
 
-function clearErro() {
-  elMsgErro.style.display = "none";
-  elMsgErro.textContent = "";
+function ddmmyyyyToISO(ddmmyyyy) {
+  // aceita "09/12/2025"
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(ddmmyyyy.trim());
+  if (!m) return null;
+  const dd = Number(m[1]);
+  const mm = Number(m[2]);
+  const yyyy = Number(m[3]);
+  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+  const iso = `${yyyy.toString().padStart(4,"0")}-${mm.toString().padStart(2,"0")}-${dd.toString().padStart(2,"0")}`;
+  return iso;
 }
 
-function setMsg(msg) {
-  elMsgTopo.textContent = msg || "";
+function todayISO() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
-function ymdFromInputDate(value) {
-  // value já vem YYYY-MM-DD do input date
-  return value || "";
-}
-
-function isTuesday(ymd) {
-  const d = new Date(ymd + "T12:00:00"); // meio-dia para evitar bugs de fuso
-  return d.getDay() === 2; // 0 dom ... 2 ter
-}
-
-/** ======= REST helper ======= */
-async function apiFetch(path, { method = "GET", body = null } = {}) {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY ||
-      SUPABASE_URL.includes("COLE_AQUI") ||
-      SUPABASE_ANON_KEY.includes("COLE_AQUI")) {
-    throw new Error("Você não colou SUPABASE_URL e SUPABASE_ANON_KEY no app.js");
-  }
-
+async function supaGet(path) {
   const url = `${SUPABASE_URL}${path}`;
+  const res = await fetch(url, { method: "GET", headers });
+  const txt = await res.text();
+  let json = null;
+  try { json = txt ? JSON.parse(txt) : null; } catch (_) {}
+  if (!res.ok) {
+    console.error("❌ GET erro", res.status, url, txt);
+    throw new Error(`GET ${res.status}: ${txt}`);
+  }
+  return json;
+}
 
-  const headers = {
-    "apikey": SUPABASE_ANON_KEY,
-    "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
-    "Content-Type": "application/json",
-    "Accept": "application/json",
-    "Prefer": "return=representation",
-  };
+async function supaPost(path, body) {
+  const url = `${SUPABASE_URL}${path}`;
+  const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
+  const txt = await res.text();
+  let json = null;
+  try { json = txt ? JSON.parse(txt) : null; } catch (_) {}
+  if (!res.ok) {
+    console.error("❌ POST erro", res.status, url, txt);
+    throw new Error(`POST ${res.status}: ${txt}`);
+  }
+  return json;
+}
 
-  const res = await fetch(url, {
-    method,
-    headers,
-    body: body ? JSON.stringify(body) : null,
+async function supaDelete(path) {
+  const url = `${SUPABASE_URL}${path}`;
+  const res = await fetch(url, { method: "DELETE", headers });
+  const txt = await res.text();
+  if (!res.ok) {
+    console.error("❌ DELETE erro", res.status, url, txt);
+    throw new Error(`DELETE ${res.status}: ${txt}`);
+  }
+  return true;
+}
+
+/** ====== Conexão ====== */
+async function testarConexao() {
+  setStatus("load", "Conectando...");
+  setErro("");
+  try {
+    const data = await supaGet(`/rest/v1/mediums?select=id&limit=1`);
+    console.log("✅ Conectado Supabase", data);
+    setStatus("ok", "Conectado");
+    return true;
+  } catch (e) {
+    setStatus("err", "Erro");
+    setErro(String(e.message || e));
+    return false;
+  }
+}
+
+/** ====== Carregar dados ====== */
+async function carregarMediums() {
+  // group_type esperado: "dirigente", "incorporacao", "desenvolvimento", "carencia"
+  // (pode ser maiúsculo/minúsculo — vou normalizar)
+  const list = await supaGet(`/rest/v1/mediums?select=id,name,group_type&order=name.asc`);
+  mediums = Array.isArray(list) ? list : [];
+  console.log("📋 mediums:", mediums);
+}
+
+async function carregarMarcacoesDaData(iso) {
+  marcacoes.clear();
+
+  // busca marcações já salvas
+  // ⚠️ aqui assume tabela public.chamadas com colunas: data, medium_id, status
+  const q = `/rest/v1/chamadas?select=medium_id,status&data=eq.${encodeURIComponent(iso)}`;
+  const rows = await supaGet(q);
+
+  (rows || []).forEach(r => {
+    if (r.medium_id && r.status) marcacoes.set(r.medium_id, r.status);
   });
 
-  const text = await res.text();
-  let data;
-  try { data = text ? JSON.parse(text) : null; } catch { data = text; }
-
-  if (!res.ok) {
-    const err = typeof data === "string" ? data : (data?.message || JSON.stringify(data));
-    throw new Error(`${res.status} ${res.statusText} — ${err}`);
-  }
-
-  return data;
+  console.log("📝 marcações carregadas", iso, Object.fromEntries(marcacoes));
 }
 
-/** ======= Carregamento inicial ======= */
-async function carregarFeriados() {
-  // tenta pegar tudo
-  const rows = await apiFetch(`/rest/v1/feriados?select=data`);
-  feriadosSet = new Set((rows || []).map(r => r.data)); // já vem YYYY-MM-DD
+/** ====== Render ====== */
+function criarLinhaMedium(m) {
+  const wrap = document.createElement("div");
+  wrap.className = "linha-medium";
+
+  const nome = document.createElement("div");
+  nome.className = "nome-medium";
+  nome.textContent = m.name || "(sem nome)";
+
+  const opcoes = document.createElement("div");
+  opcoes.className = "opcoes-medium";
+
+  const statusAtual = marcacoes.get(m.id) || "";
+
+  // cria radios P/M/F/PS (SEM rádio extra)
+  const itens = ["P", "M", "F", "PS"];
+
+  itens.forEach((v) => {
+    const lab = document.createElement("label");
+    lab.className = "opcao";
+
+    const inp = document.createElement("input");
+    inp.type = "radio";
+    inp.name = `st_${m.id}`;   // grupo por médium
+    inp.value = v;
+
+    if (v === statusAtual) inp.checked = true;
+
+    inp.addEventListener("change", () => {
+      marcacoes.set(m.id, v);
+      console.log("✅ marcou", m.name, m.id, v);
+      setTopo("Alterações pendentes. Clique em “Salvar chamada”.");
+    });
+
+    const txt = document.createElement("span");
+    txt.textContent = v;
+
+    lab.appendChild(inp);
+    lab.appendChild(txt);
+    opcoes.appendChild(lab);
+  });
+
+  // botão limpar (pra remover marcação)
+  const btnLimpar = document.createElement("button");
+  btnLimpar.type = "button";
+  btnLimpar.className = "btn-limpar";
+  btnLimpar.textContent = "Limpar";
+
+  btnLimpar.addEventListener("click", () => {
+    marcacoes.delete(m.id);
+    // desmarca radios no DOM
+    const radios = wrap.querySelectorAll(`input[name="st_${m.id}"]`);
+    radios.forEach(r => (r.checked = false));
+    console.log("🧹 limpou", m.name, m.id);
+    setTopo("Alterações pendentes. Clique em “Salvar chamada”.");
+  });
+
+  opcoes.appendChild(btnLimpar);
+
+  wrap.appendChild(nome);
+  wrap.appendChild(opcoes);
+
+  return wrap;
 }
 
-async function carregarMediums() {
-  const rows = await apiFetch(`/rest/v1/mediums?select=id,name,group_type&order=name.asc`);
-  mediums = rows || [];
-}
-
-/** ======= Render ======= */
-function limparListas() {
+function renderizarTudo() {
   listaDirigentes.innerHTML = "";
   listaIncorporacao.innerHTML = "";
   listaDesenvolvimento.innerHTML = "";
   listaCarencia.innerHTML = "";
-}
 
-function grupoContainer(group_type) {
-  const gt = (group_type || "").toLowerCase();
-  if (gt === "dirigente") return listaDirigentes;
-  if (gt === "incorporacao" || gt === "incorporação") return listaIncorporacao;
-  if (gt === "desenvolvimento") return listaDesenvolvimento;
-  if (gt === "carencia" || gt === "carência") return listaCarencia;
-  // fallback: joga em desenvolvimento
-  return listaDesenvolvimento;
-}
+  const norm = (x) => String(x || "").trim().toLowerCase();
 
-function criarLinhaMedium(m) {
-  const row = document.createElement("div");
-  row.className = "row";
-
-  const name = document.createElement("div");
-  name.className = "name";
-  name.textContent = m.name;
-
-  const opts = document.createElement("div");
-  opts.className = "opts";
-
-  // opções oficiais
-  // "" = sem marcação, P, M, F, PS
-  const opcoes = ["", "P", "M", "F", "PS"];
-
-  opcoes.forEach((val) => {
-    const label = document.createElement("label");
-    label.className = "opt";
-
-    const input = document.createElement("input");
-    input.type = "radio";
-    input.name = `status_${m.id}`;
-    input.value = val;
-
-    // carência: não permite M nem PS (como você mesmo definiu)
-    const gt = (m.group_type || "").toLowerCase();
-    if (gt === "carencia" || gt === "carência") {
-      if (val === "M" || val === "PS") input.disabled = true;
-    }
-
-    const span = document.createElement("span");
-    span.textContent = val === "" ? " " : val;
-
-    // marca se já tem no estado
-    const atual = marcacoes.get(m.id) || "";
-    if (atual === val) input.checked = true;
-
-    input.addEventListener("change", () => {
-      marcacoes.set(m.id, val);
-    });
-
-    label.appendChild(input);
-    label.appendChild(span);
-    opts.appendChild(label);
-  });
-
-  row.appendChild(name);
-  row.appendChild(opts);
-  return row;
-}
-
-function renderMediums() {
-  limparListas();
-
-  // sempre mantém a ordem por nome (já vem do SQL)
   mediums.forEach(m => {
-    const container = grupoContainer(m.group_type);
-    container.appendChild(criarLinhaMedium(m));
+    const gt = norm(m.group_type);
+
+    const linha = criarLinhaMedium(m);
+
+    if (gt === "dirigente") listaDirigentes.appendChild(linha);
+    else if (gt === "incorporacao") listaIncorporacao.appendChild(linha);
+    else if (gt === "desenvolvimento") listaDesenvolvimento.appendChild(linha);
+    else if (gt === "carencia") listaCarencia.appendChild(linha);
+    else {
+      // se vier diferente, joga em desenvolvimento por padrão pra não sumir
+      listaDesenvolvimento.appendChild(linha);
+    }
   });
 }
 
-/** ======= Data / chamada ======= */
-async function carregarMarcacoesDaData(ymd) {
-  // busca chamada do dia e aplica no map
-  const rows = await apiFetch(`/rest/v1/chamadas?select=medium_id,status&data=eq.${encodeURIComponent(ymd)}`);
-  marcacoes.clear();
-  (rows || []).forEach(r => {
-    marcacoes.set(r.medium_id, r.status || "");
-  });
+/** ====== Regras da data (básico) ====== */
+async function verificarDataEPreparar() {
+  setErro("");
+  setTopo("");
+
+  // tenta ler do input (date ou texto)
+  let iso = null;
+
+  // se for <input type="date">: value vem YYYY-MM-DD
+  if (elData && /^\d{4}-\d{2}-\d{2}$/.test(elData.value || "")) {
+    iso = elData.value;
+  } else if (elData && /^\d{2}\/\d{2}\/\d{4}$/.test(elData.value || "")) {
+    iso = ddmmyyyyToISO(elData.value);
+  }
+
+  if (!iso) {
+    setErro("Data inválida. Use dd/mm/aaaa ou selecione no calendário.");
+    return false;
+  }
+
+  dataAtivaISO = iso;
+  console.log("📅 data ativa:", dataAtivaISO);
+
+  // carrega marcações da data e renderiza
+  await carregarMarcacoesDaData(dataAtivaISO);
+  renderizarTudo();
+
+  setTopo("Data válida.");
+  return true;
 }
 
-function validarData(ymd) {
-  if (!ymd) return { ok:false, msg:"Selecione uma data." };
-
-  if (!isTuesday(ymd)) {
-    return { ok:false, msg:"Data inválida: a reunião é terça-feira." };
-  }
-
-  if (feriadosSet.has(ymd)) {
-    return { ok:false, msg:"Data inválida: é feriado cadastrado." };
-  }
-
-  return { ok:true, msg:"Data válida." };
-}
-
-async function verificarData() {
-  clearErro();
-  setMsg("");
-
-  const ymd = ymdFromInputDate(elData.value);
-  const v = validarData(ymd);
-  if (!v.ok) {
-    setMsg(v.msg);
-    return;
-  }
-
-  setMsg(v.msg);
-
-  // carrega marcações existentes e re-render para “pintar” radios
-  try {
-    await carregarMarcacoesDaData(ymd);
-    renderMediums();
-  } catch (e) {
-    showErro("Falha ao carregar marcações dessa data", e.message);
-  }
-}
-
+/** ====== Salvar ====== */
 async function salvarChamada() {
-  clearErro();
-  setMsg("");
-
-  const ymd = ymdFromInputDate(elData.value);
-  const v = validarData(ymd);
-  if (!v.ok) {
-    setMsg(v.msg);
+  setErro("");
+  if (!dataAtivaISO) {
+    setErro("Primeiro clique em “Verificar data”.");
     return;
   }
 
-  // monta payload apenas com quem tem status marcado (não-vazio)
-  const linhas = [];
+  // monta payload (só quem tem marcação)
+  const payload = [];
   for (const m of mediums) {
-    const st = (marcacoes.get(m.id) || "").trim();
-    if (st) {
-      linhas.push({
-        medium_id: m.id,
-        data: ymd,
-        status: st
-      });
-    }
+    const st = marcacoes.get(m.id);
+    if (st) payload.push({ data: dataAtivaISO, medium_id: m.id, status: st });
   }
 
   try {
-    // estratégia “sem dor de cabeça”:
-    // 1) apaga tudo do dia
-    // 2) insere tudo de novo
-    await apiFetch(`/rest/v1/chamadas?data=eq.${encodeURIComponent(ymd)}`, { method: "DELETE" });
+    setStatus("load", "Salvando...");
 
-    if (linhas.length > 0) {
-      await apiFetch(`/rest/v1/chamadas`, { method: "POST", body: linhas });
+    // estratégia mais segura: apaga tudo da data e reinsere
+    await supaDelete(`/rest/v1/chamadas?data=eq.${encodeURIComponent(dataAtivaISO)}`);
+
+    if (payload.length > 0) {
+      await supaPost(`/rest/v1/chamadas`, payload);
     }
 
-    setMsg("Chamada salva com sucesso.");
+    setStatus("ok", "Conectado");
+    setTopo("Chamada salva com sucesso ✅");
+    console.log("💾 salva", dataAtivaISO, payload);
   } catch (e) {
-    showErro("Falha ao salvar chamada", e.message);
+    setStatus("err", "Erro");
+    setErro(String(e.message || e));
   }
 }
 
-/** ======= Boot ======= */
-async function init() {
-  try {
-    setPill("warn", "Conectando...");
-    clearErro();
-    setMsg("");
+/** ====== Boot ====== */
+async function boot() {
+  const ok = await testarConexao();
+  if (!ok) return;
 
-    // carrega dados básicos
-    await carregarFeriados();
-    await carregarMediums();
+  await carregarMediums();
 
-    // render base
-    renderMediums();
+  // render sem marcação (a data define)
+  renderizarTudo();
 
-    setPill("ok", "Conectado ✅");
-    setMsg("Pronto");
-
-  } catch (e) {
-    setPill("err", "Erro");
-    showErro("Não conectou no Supabase", e.message);
+  // se quiser, já seta hoje como padrão se o input estiver vazio
+  if (elData && !elData.value) {
+    // se for type="date"
+    elData.value = todayISO();
   }
 }
 
-btnVerificar.addEventListener("click", verificarData);
-btnSalvar.addEventListener("click", salvarChamada);
+document.addEventListener("DOMContentLoaded", () => {
+  boot();
 
-init();
-
-
-
-
-
-
+  if (btnVerificar) btnVerificar.addEventListener("click", verificarDataEPreparar);
+  if (btnSalvar) btnSalvar.addEventListener("click", salvarChamada);
+});
