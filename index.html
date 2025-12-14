@@ -1,120 +1,161 @@
 <!doctype html>
-<html lang="pt-br">
+<html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Chamada de Médiuns</title>
-  <link rel="stylesheet" href="./style.css?v=1" />
-
-  <!-- ✅ SUAS CHAVES (já embutidas) -->
-  <script>
-    window.__SUPABASE_URL__ = "https://nouzzyrevykdmnqifjjt.supabase.co";
-    window.__SUPABASE_ANON_KEY__ = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5vdXp6eXJldnlrZG1ucWlmamp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUzOTYzMDIsImV4cCI6MjA4MDk3MjMwMn0.s2OzeSXe7CrKDNl6fXkTcMj_Vgitod0l0h0BiJA79nc";
-  </script>
-
-  <!-- Supabase primeiro -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-
-  <!-- App depois (defer) -->
-  <script src="./app.js?v=1" defer></script>
+  <style>
+    :root{
+      --bg1:#0b2a40;
+      --bg2:#071c2c;
+      --card:rgba(8, 28, 44, .55);
+      --stroke:rgba(255,255,255,.10);
+      --text:#eaf2ff;
+      --muted:rgba(234,242,255,.70);
+      --btn:#1e3c55;
+      --btn2:#163247;
+      --green1:#18c27a;
+      --green2:#0da35f;
+      --red:#ff5b5b;
+      --yellow:#ffd166;
+    }
+    body{
+      margin:0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      color:var(--text);
+      min-height:100vh;
+      background: radial-gradient(1200px 600px at 20% 0%, #123a55 0%, transparent 60%),
+                  linear-gradient(180deg, var(--bg1) 0%, var(--bg2) 100%);
+    }
+    .wrap{max-width:860px;margin:0 auto;padding:28px 16px 50px;}
+    h1{margin:0 0 6px;font-size:44px;letter-spacing:.3px;}
+    .subtitle{margin:0 0 18px;color:var(--muted);font-size:16px}
+    .card{
+      background:var(--card);
+      border:1px solid var(--stroke);
+      border-radius:22px;
+      padding:18px;
+      box-shadow: 0 10px 30px rgba(0,0,0,.35);
+      backdrop-filter: blur(10px);
+    }
+    .row{display:flex;gap:14px;flex-wrap:wrap;align-items:center}
+    .pill{
+      display:inline-flex;align-items:center;gap:8px;
+      padding:10px 14px;border-radius:14px;
+      background:rgba(255,255,255,.06);
+      border:1px solid var(--stroke);
+      font-weight:600;
+      min-width:140px;
+      justify-content:center;
+    }
+    .dot{width:10px;height:10px;border-radius:999px;background:var(--yellow);box-shadow:0 0 10px rgba(255,209,102,.55)}
+    .dot.ok{background:var(--green1);box-shadow:0 0 10px rgba(24,194,122,.55)}
+    .dot.err{background:var(--red);box-shadow:0 0 10px rgba(255,91,91,.55)}
+    .input{
+      background:rgba(0,0,0,.15);
+      border:1px solid var(--stroke);
+      color:var(--text);
+      padding:14px 14px;
+      border-radius:16px;
+      outline:none;
+      min-width:220px;
+      font-size:16px;
+    }
+    .btn{
+      background:linear-gradient(180deg,var(--btn) 0%, var(--btn2) 100%);
+      border:1px solid var(--stroke);
+      color:var(--text);
+      padding:14px 18px;
+      border-radius:18px;
+      font-weight:700;
+      cursor:pointer;
+      min-width:120px;
+    }
+    .btn:disabled{opacity:.55;cursor:not-allowed}
+    .btnGreen{
+      background:linear-gradient(180deg,var(--green1) 0%, var(--green2) 100%);
+      border:none;
+      color:#062014;
+      padding:14px 18px;
+      border-radius:18px;
+      font-weight:800;
+      cursor:pointer;
+      min-width:180px;
+    }
+    .btnGreen:disabled{opacity:.55;cursor:not-allowed}
+    .msg{margin-top:10px;color:var(--muted);font-size:14px}
+    h2{margin:20px 0 10px;font-size:34px}
+    .hint{margin-top:6px;color:var(--muted)}
+    .list{display:flex;flex-direction:column;gap:10px}
+    .item{
+      display:flex;align-items:center;justify-content:space-between;gap:12px;
+      padding:12px 12px;
+      border-radius:16px;
+      background:rgba(255,255,255,.06);
+      border:1px solid var(--stroke);
+    }
+    .name{font-size:18px;font-weight:700}
+    .seg{display:flex;gap:8px}
+    .seg button{
+      width:46px;height:40px;border-radius:14px;
+      border:1px solid var(--stroke);
+      background:rgba(0,0,0,.10);
+      color:var(--text);
+      font-weight:900;
+      cursor:pointer;
+    }
+    .seg button.active{outline:2px solid rgba(24,194,122,.55); background:rgba(24,194,122,.18)}
+    .seg button.disabled{opacity:.35;cursor:not-allowed}
+    .small{font-size:12px;color:var(--muted)}
+    .split{height:1px;background:rgba(255,255,255,.10);margin:12px 0}
+  </style>
 </head>
 
 <body>
-  <header class="top">
-    <div class="top__title">
-      <h1>Chamada de Médiuns</h1>
-      <p>Reunião: terça-feira 18:30 (exceto feriados)</p>
+  <div class="wrap">
+    <h1>Chamada de Médiuns</h1>
+    <p class="subtitle">Reunião: terça-feira 18:30 (exceto feriados)</p>
+
+    <div class="card">
+      <div class="row">
+        <div class="pill" id="pillConn">
+          <span class="dot" id="dotConn"></span>
+          <span id="txtConn">Conectando...</span>
+        </div>
+
+        <div style="flex:1;min-width:260px">
+          <div class="small">Data da chamada</div>
+          <input class="input" id="dt" type="date" />
+        </div>
+
+        <button class="btn" id="btnVerificar">Verificar data</button>
+      </div>
+
+      <div style="margin-top:14px">
+        <button class="btnGreen" id="btnSalvar" disabled>Salvar chamada</button>
+      </div>
+
+      <div class="msg" id="msg">Selecione a data e clique em “Verificar data”.</div>
+
+      <div class="split"></div>
+
+      <h2>Dirigentes</h2>
+      <div class="list" id="list_dirigentes"></div>
+
+      <h2>Médiuns de Incorporação</h2>
+      <div class="list" id="list_incorporacao"></div>
+
+      <h2>Médiuns em Desenvolvimento</h2>
+      <div class="list" id="list_desenvolvimento"></div>
+
+      <h2>Médiuns em Carência</h2>
+      <div class="hint">Carência não senta na mesa (somente P/F).</div>
+      <div class="list" id="list_carencia"></div>
     </div>
+  </div>
 
-    <div class="top__actions">
-      <button id="btnTabChamada" class="chip chip--active" type="button">Chamada</button>
-      <button id="btnTabParticipantes" class="chip" type="button">Participantes</button>
-    </div>
-  </header>
-
-  <main class="wrap">
-    <section class="statusbar">
-      <div id="statusConn" class="statusbar__item">Conectando…</div>
-      <div id="statusMsg" class="statusbar__item statusbar__item--muted"></div>
-    </section>
-
-    <!-- ABA: CHAMADA -->
-    <section id="abaChamada" class="panel">
-      <div class="panel__row">
-        <div class="field">
-          <label>Data da chamada</label>
-          <div class="field__inline">
-            <input id="dataChamada" type="date" />
-            <button id="btnVerificarData" class="btn btn--soft" type="button">Verificar data</button>
-          </div>
-          <div id="avisoData" class="help"></div>
-        </div>
-
-        <div class="legend">
-          <span><span class="dot dot--yellow"></span> Próximo (Mesa)</span>
-          <span><span class="dot dot--red"></span> Próximo (Psicografia)</span>
-          <span><span class="dot dot--danger"></span> Falta alta (≥ 30%)</span>
-        </div>
-      </div>
-
-      <div class="panel__row panel__row--actions">
-        <button id="btnSalvar" class="btn btn--primary" type="button">Salvar chamada</button>
-        <div id="resultadoSalvar" class="help"></div>
-      </div>
-
-      <h2 class="sectionTitle">Dirigentes</h2>
-      <div id="listaDirigentes" class="list"></div>
-
-      <h2 class="sectionTitle">Médiuns de Incorporação</h2>
-      <div id="listaIncorporacao" class="list"></div>
-
-      <h2 class="sectionTitle">Médiuns em Desenvolvimento</h2>
-      <div id="listaDesenvolvimento" class="list"></div>
-
-      <h2 class="sectionTitle">Médiuns em Carência</h2>
-      <p class="muted">Carência não senta na mesa (somente P/F).</p>
-      <div id="listaCarencia" class="list"></div>
-    </section>
-
-    <!-- ABA: PARTICIPANTES -->
-    <section id="abaParticipantes" class="panel hidden">
-      <div class="panel__row">
-        <div class="field w100">
-          <label>Buscar</label>
-          <input id="busca" type="text" placeholder="Digite parte do nome..." />
-          <div class="help muted" id="statusAdmin"></div>
-        </div>
-      </div>
-
-      <div class="grid2">
-        <div class="card">
-          <h3>Novo participante</h3>
-
-          <div class="field">
-            <label>Nome</label>
-            <input id="novoNome" type="text" placeholder="Ex.: Marcelo Loureiro" />
-          </div>
-
-          <div class="field">
-            <label>Grupo</label>
-            <select id="novoGrupo">
-              <option value="dirigente">Dirigente</option>
-              <option value="incorporacao">Incorporação</option>
-              <option value="desenvolvimento">Desenvolvimento</option>
-              <option value="carencia">Carência</option>
-            </select>
-          </div>
-
-          <button id="btnAdicionar" class="btn btn--primary" type="button">Adicionar</button>
-          <div id="msgAdmin" class="help"></div>
-        </div>
-
-        <div class="card">
-          <h3>Lista</h3>
-          <div id="listaAdmin" class="adminList"></div>
-        </div>
-      </div>
-    </section>
-  </main>
+  <!-- Supabase v2 CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" crossorigin="anonymous"></script>
+  <script src="./app.js"></script>
 </body>
 </html>
