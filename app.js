@@ -154,6 +154,23 @@ async function carregarMarcacoesDaData(iso) {
 }
 
 /** ====== Render ====== */
+function calcularPercentual(registros) {
+  let p = 0, m = 0, f = 0, ps = 0;
+
+  registros.forEach(r => {
+    if (r.status === "P") p++;
+    if (r.status === "M") m++;
+    if (r.status === "F") f++;
+    if (r.status === "PS") ps++;
+  });
+
+  const total = p + m + f;
+  if (total === 0) return "—";
+
+  const presenca = p + m + ps;
+  return Math.round((presenca / total) * 100) + "%";
+}
+
 function criarLinhaMedium(m) {
   const wrap = document.createElement("div");
   wrap.className = "linha-medium";
@@ -230,6 +247,12 @@ function renderizarTudo() {
     const gt = norm(m.group_type);
 
     const linha = criarLinhaMedium(m);
+linha.classList.remove("psicografia","incorporacao","sustentacao");
+
+if (status === "PS") linha.classList.add("psicografia");
+if (status === "M") linha.classList.add("incorporacao");
+if (status === "P") linha.classList.add("sustentacao");
+
 
     if (gt === "dirigente") listaDirigentes.appendChild(linha);
     else if (gt === "incorporacao") listaIncorporacao.appendChild(linha);

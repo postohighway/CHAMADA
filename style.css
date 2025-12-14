@@ -115,3 +115,28 @@ h2{margin: 26px 0 10px; font-size: 44px}
   cursor:pointer;
   font-weight:800;
 }
+
+/* ===== VISUAIS DE STATUS ===== */
+
+.linha-medium.psicografia {
+  background: rgba(255, 60, 60, 0.12);
+  border-left: 4px solid #ff4d4d;
+}
+
+.linha-medium.psicografia .nome-medium {
+  color: #ff4d4d;
+}
+
+.linha-medium.incorporacao {
+  background: rgba(80, 140, 255, 0.10);
+}
+
+.linha-medium.sustentacao {
+  background: rgba(60, 200, 140, 0.10);
+}
+
+.percentual {
+  font-size: 13px;
+  opacity: .85;
+  margin-top: 4px;
+}
