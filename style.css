@@ -171,3 +171,38 @@ input[type="date"]{
 .btnSmall:hover{ filter: brightness(1.10); }
 
 .foot{ margin: 24px 0 10px; color: var(--muted); }
+/* ===== Rotação / Destaques ===== */
+.item.nextStart{
+  background: rgba(245,197,66,.10);
+  outline: 1px solid rgba(245,197,66,.40);
+}
+.badgeStart{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(245,197,66,.40);
+  background: rgba(245,197,66,.10);
+  color: rgba(245,197,66,.95);
+  font-weight: 900;
+  font-size: 12px;
+}
+
+.item.psAuto{
+  background: rgba(255,75,75,.10);
+  outline: 1px solid rgba(255,75,75,.30);
+}
+.badgePS{
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,75,75,.40);
+  background: rgba(255,75,75,.10);
+  color: rgba(255,75,75,.95);
+  font-weight: 900;
+  font-size: 12px;
+}
+

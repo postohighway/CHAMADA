@@ -12,6 +12,7 @@ const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 const TB_MEDIUMS = "mediums";
 const TB_CHAMADAS = "chamadas";
 const TB_FERIADOS = "feriados";
+const TB_ROTACAO = "rotacao";
 
 const COL_DATE = "data";
 const COL_MEDIUMID = "medium_id";
@@ -45,10 +46,15 @@ const resumoDesenvolvimento = $("resumoDesenvolvimento");
 const resumoCarencia = $("resumoCarencia");
 
 /** Estado */
-let feriadosSet = new Set(); // YYYY-MM-DD
-let mediums = [];            // rows de mediums
-let statusPorMedium = new Map(); // medium_id -> P/M/F/PS/""
+let feriadosSet = new Set();            // YYYY-MM-DD
+let mediums = [];                       // rows mediums
+let statusPorMedium = new Map();        // medium_id -> P/M/F/PS/""
 let dataAtual = "";
+
+// rotação
+let rotacaoLast = new Map();            // group_type -> last_medium_id
+let nextStartByGroup = new Map();       // grupo (key) -> next medium id (ponto de início amarelo)
+let nextPsId = "";                      // próximo da psicografia (destacado)
 
 /** Helpers */
 function setMsg(ok = "", err = "") {
@@ -67,7 +73,7 @@ function safeJson(text) {
 }
 
 function isoFromDateInput(v) {
-  return (v || "").trim(); // input date -> YYYY-MM-DD
+  return (v || "").trim();
 }
 
 function isTuesday(iso) {
@@ -124,8 +130,8 @@ async function supaGet(path) {
   return safeJson(t) ?? [];
 }
 
-async function supaDeleteChamadasByDate(iso) {
-  const url = `${SUPABASE_URL}/rest/v1/${TB_CHAMADAS}?${COL_DATE}=eq.${encodeURIComponent(iso)}`;
+async function supaDeleteBy(table, where) {
+  const url = `${SUPABASE_URL}/rest/v1/${table}?${where}`;
   const r = await fetch(url, {
     method: "DELETE",
     headers: { ...headers(), "Prefer": "return=minimal" },
@@ -137,8 +143,8 @@ async function supaDeleteChamadasByDate(iso) {
   }
 }
 
-async function supaInsertChamadas(rows) {
-  const url = `${SUPABASE_URL}/rest/v1/${TB_CHAMADAS}`;
+async function supaInsert(table, rows) {
+  const url = `${SUPABASE_URL}/rest/v1/${table}`;
   const r = await fetch(url, {
     method: "POST",
     headers: { ...headers(), "Prefer": "return=minimal" },
@@ -171,8 +177,16 @@ async function loadFeriados() {
 }
 
 async function loadMediums() {
-  // Puxa também presencas/faltas para mostrar % na tela
-  mediums = await supaGet(`${TB_MEDIUMS}?select=id,name,group_type,presencas,faltas&order=name.asc`);
+  // puxa também mesa/psicografia para elegibilidade e destaques
+  mediums = await supaGet(`${TB_MEDIUMS}?select=id,name,group_type,presencas,faltas,mesa,psicografia&order=name.asc`);
+}
+
+async function loadRotacao() {
+  const rows = await supaGet(`${TB_ROTACAO}?select=group_type,last_medium_id`);
+  rotacaoLast = new Map();
+  for (const r of rows) {
+    if (r.group_type) rotacaoLast.set(String(r.group_type), r.last_medium_id || "");
+  }
 }
 
 async function loadChamadas(iso) {
@@ -193,6 +207,37 @@ async function loadChamadas(iso) {
     const st = statusPorMedium.get(m.id);
     if (st === "PS" && g !== "dirigentes") statusPorMedium.set(m.id, "");
   }
+}
+
+/** Rotação - cálculo do "próximo" */
+function nextAfter(lastId, list) {
+  if (!list.length) return "";
+  const idx = list.findIndex(x => x.id === lastId);
+  if (idx === -1) return list[0].id;
+  return list[(idx + 1) % list.length].id;
+}
+
+function computeRotacaoHighlights(groups) {
+  nextStartByGroup = new Map();
+
+  // Rotação da mesa: usamos apenas os elegíveis (mesa=1) em incorp/sust
+  const incEligible = groups.incorporacao.filter(m => Number(m.mesa || 0) === 1);
+  const susEligible = groups.sustentacao.filter(m => Number(m.mesa || 0) === 1);
+
+  const lastInc = rotacaoLast.get("incorporacao") || rotacaoLast.get("incorporação") || "";
+  const lastSus = rotacaoLast.get("sustentacao") || rotacaoLast.get("sustentação") || "";
+
+  const nextInc = nextAfter(lastInc, incEligible);
+  const nextSus = nextAfter(lastSus, susEligible);
+
+  if (nextInc) nextStartByGroup.set("incorporacao", nextInc);
+  if (nextSus) nextStartByGroup.set("sustentacao", nextSus);
+
+  // Psicografia: elegíveis com psicografia=1 dentro de dirigentes
+  const psEligible = groups.dirigentes.filter(m => Number(m.psicografia || 0) === 1);
+
+  const lastPs = rotacaoLast.get("psicografia") || "";
+  nextPsId = nextAfter(lastPs, psEligible);
 }
 
 /** Render */
@@ -217,8 +262,6 @@ function resumoGrupo(arr, group) {
   const pres = P+M;
   const percPres = total ? Math.round((pres/total)*100) : 0;
   const percFalt = total ? Math.round((F/total)*100) : 0;
-
-  // PS só para dirigentes
   const psTxt = (group === "dirigentes") ? ` | PS:${PS}` : "";
   return `P:${P} M:${M} F:${F}${psTxt} | Presença:${percPres}% | Faltas:${percFalt}%`;
 }
@@ -227,12 +270,22 @@ function renderGrupo(container, resumoEl, group, arr) {
   const opts = allowed(group);
   resumoEl.textContent = `(${arr.length}) ${resumoGrupo(arr, group)}`;
 
+  const startId = nextStartByGroup.get(group) || "";
+
   for (const m of arr) {
     const st = (statusPorMedium.get(m.id) || "").toUpperCase();
     const pessoa = calcPessoa(m);
 
     const row = document.createElement("div");
-    row.className = "item" + (group==="dirigentes" && st==="PS" ? " ps" : "");
+
+    // Destaque PS automático (vermelho) e destaque ponto de início (amarelo)
+    const isPsAuto = (group === "dirigentes" && nextPsId && m.id === nextPsId);
+    const isStart = (startId && m.id === startId);
+
+    row.className = "item"
+      + (isStart ? " nextStart" : "")
+      + (isPsAuto ? " psAuto" : "")
+      + (group==="dirigentes" && st==="PS" ? " ps" : "");
 
     const nameBlock = document.createElement("div");
     nameBlock.className = "nameBlock";
@@ -248,6 +301,29 @@ function renderGrupo(container, resumoEl, group, arr) {
     nameBlock.appendChild(nome);
     nameBlock.appendChild(meta);
 
+    // Badges (amarelo / psicografia)
+    const badges = document.createElement("div");
+    badges.style.display = "flex";
+    badges.style.gap = "8px";
+    badges.style.marginTop = "6px";
+    badges.style.flexWrap = "wrap";
+
+    if (isStart) {
+      const b = document.createElement("span");
+      b.className = "badgeStart";
+      b.textContent = "🟡 Início da rotação (Mesa)";
+      badges.appendChild(b);
+    }
+
+    if (isPsAuto) {
+      const b = document.createElement("span");
+      b.className = "badgePS";
+      b.textContent = "🔴 Psicografia (próximo)";
+      badges.appendChild(b);
+    }
+
+    if (badges.childNodes.length) nameBlock.appendChild(badges);
+
     const controls = document.createElement("div");
     controls.className = "controls";
 
@@ -255,7 +331,18 @@ function renderGrupo(container, resumoEl, group, arr) {
     radios.className = "radios";
     const rname = `m_${m.id}`;
 
+    // regras extras:
+    // - PS só aparece em dirigentes
+    // - M só aparece para quem é elegível mesa=1 (exceto dirigentes, onde M existe normal)
+    const mesaEligible = Number(m.mesa || 0) === 1;
+
     for (const o of opts) {
+      if (o === "PS" && group !== "dirigentes") continue;
+      if (o === "M" && group !== "dirigentes" && group !== "carencia" && !mesaEligible) {
+        // para incorp/sust/desenvolvimento: só mostra M se mesa=1
+        continue;
+      }
+
       const lab = document.createElement("label");
       lab.className = "radioOpt";
       const inp = document.createElement("input");
@@ -326,14 +413,14 @@ function renderAll() {
     carencia: []
   };
 
-  for (const m of mediums) {
-    groups[groupKey(m.group_type)].push(m);
-  }
+  for (const m of mediums) groups[groupKey(m.group_type)].push(m);
 
-  // ordem alfabética
   for (const k of Object.keys(groups)) {
     groups[k].sort((a,b)=>(a.name||"").localeCompare((b.name||""), "pt-BR"));
   }
+
+  // calcula destaques da rotação
+  computeRotacaoHighlights(groups);
 
   renderGrupo(listaDirigentes, resumoDirigentes, "dirigentes", groups.dirigentes);
   renderGrupo(listaIncorporacao, resumoIncorporacao, "incorporacao", groups.incorporacao);
@@ -351,7 +438,7 @@ function renderAll() {
   renderResumoGeral(everyone);
 }
 
-/** Salvar */
+/** Salvar + atualizar rotação */
 async function salvar() {
   setMsg("", "");
   const iso = isoFromDateInput(elData.value);
@@ -360,8 +447,12 @@ async function salvar() {
   const ok = await verificarData();
   if (!ok) return;
 
-  // monta linhas para INSERT
-  const rows = [];
+  // INSERT chamadas
+  const callRows = [];
+  // para rotação:
+  const lastMByGroup = new Map(); // "incorporacao"/"sustentacao" -> medium_id
+  let psSelecionado = "";         // medium_id
+
   for (const m of mediums) {
     const g = groupKey(m.group_type);
     const st = (statusPorMedium.get(m.id) || "").toUpperCase();
@@ -370,23 +461,52 @@ async function salvar() {
     // valida por grupo
     if (!allowed(g).includes(st)) continue;
 
-    rows.push({
+    callRows.push({
       [COL_MEDIUMID]: m.id,
       [COL_DATE]: iso,
       [COL_STATUS]: st
     });
+
+    if (st === "M") {
+      // atualiza rotação só para incorp/sust (mesa)
+      if (g === "incorporacao" || g === "sustentacao") {
+        lastMByGroup.set(g, m.id);
+      }
+    }
+    if (st === "PS" && g === "dirigentes") {
+      psSelecionado = m.id;
+    }
   }
 
   btnSalvar.disabled = true;
   btnSalvar.textContent = "Salvando...";
 
   try {
-    await supaDeleteChamadasByDate(iso);
-    if (rows.length) await supaInsertChamadas(rows);
+    // Salva chamadas
+    await supaDeleteBy(TB_CHAMADAS, `${COL_DATE}=eq.${encodeURIComponent(iso)}`);
+    if (callRows.length) await supaInsert(TB_CHAMADAS, callRows);
+
+    // Atualiza rotação mesa (se marcou M)
+    const now = new Date().toISOString();
+
+    for (const [g, mid] of lastMByGroup.entries()) {
+      await supaDeleteBy(TB_ROTACAO, `group_type=eq.${encodeURIComponent(g)}`);
+      await supaInsert(TB_ROTACAO, [{ group_type: g, last_medium_id: mid, updated_at: now }]);
+    }
+
+    // Atualiza rotação psicografia (se marcou PS)
+    if (psSelecionado) {
+      await supaDeleteBy(TB_ROTACAO, `group_type=eq.psicografia`);
+      await supaInsert(TB_ROTACAO, [{ group_type: "psicografia", last_medium_id: psSelecionado, updated_at: now }]);
+    }
 
     setMsg("Chamada salva com sucesso ✅", "");
+
+    // Recarrega tudo para refletir rotação e psicografia em QUALQUER data
+    await loadRotacao();
     await loadChamadas(iso);
     renderAll();
+
   } catch (e) {
     setMsg("", "Erro ao salvar: " + (e?.message || e));
   } finally {
@@ -412,6 +532,7 @@ async function boot() {
 
     await loadFeriados();
     await loadMediums();
+    await loadRotacao();
 
     renderAll();
     setMsg("Selecione a data e clique em “Verificar data”.", "");
@@ -434,6 +555,7 @@ btnVerificar.addEventListener("click", async () => {
     dataAtual = iso;
     setMsg("Carregando marcações...", "");
     try {
+      await loadRotacao();      // << importante: rotação funciona em qualquer data
       await loadChamadas(iso);
       renderAll();
       setMsg("Pronto", "");
