@@ -214,3 +214,77 @@ input[type="date"]{
 /* Destaque visual na linha */
 .itemRow.nextMesa { box-shadow: inset 0 0 0 1px rgba(255,193,7,.35); }
 .itemRow.nextPsico { box-shadow: inset 0 0 0 1px rgba(244,67,54,.35); }
+/* Tabs */
+.tabs { display:flex; gap:10px; margin-top: 14px; }
+.tabBtn{
+  border:1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.06);
+  color:#eaf2ff;
+  padding:10px 14px;
+  border-radius: 14px;
+  cursor:pointer;
+  font-weight: 800;
+}
+.tabBtn.active{
+  background: rgba(0, 200, 120, .18);
+  border-color: rgba(0, 200, 120, .28);
+}
+
+/* Participantes */
+.actionsRow{ display:flex; gap:12px; align-items:center; margin-top: 12px; flex-wrap: wrap; }
+.divider{ height:1px; background: rgba(255,255,255,.10); margin: 18px 0; }
+.grid3{ display:grid; grid-template-columns: 1.2fr .8fr 1fr; gap: 14px; }
+@media (max-width: 900px){ .grid3{ grid-template-columns: 1fr; } }
+
+.checks{ display:flex; gap:14px; flex-wrap: wrap; align-items:center; }
+.check{ display:flex; gap:8px; align-items:center; }
+
+.partRow{
+  display:flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(255,255,255,.10);
+  background: rgba(255,255,255,.04);
+  margin-bottom: 10px;
+}
+.partName{ font-size: 18px; font-weight: 900; }
+.partMeta{ color: rgba(255,255,255,.70); font-weight: 700; margin-top: 6px; }
+.partRight{ display:flex; gap:10px; align-items:center; }
+
+.btnSmall.danger{
+  border-color: rgba(244,67,54,.35) !important;
+  background: rgba(244,67,54,.10) !important;
+}
+.modalBackdrop{
+  position:fixed; inset:0;
+  background: rgba(0,0,0,.55);
+  display:flex; align-items:center; justify-content:center;
+  padding: 18px;
+  z-index: 9999;
+}
+.modalBox{
+  width: min(780px, 96vw);
+  background: rgba(10, 22, 35, .98);
+  border: 1px solid rgba(255,255,255,.14);
+  border-radius: 18px;
+  padding: 16px;
+}
+.modalTitle{ font-size: 18px; font-weight: 900; margin-bottom: 10px; }
+.empty{ padding: 18px; opacity: .75; font-weight: 800; }
+
+/* Badges rotação (caso não tenha) */
+.badges { margin-top: 8px; display: flex; gap: 8px; flex-wrap: wrap; }
+.badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 10px; border-radius: 999px;
+  font-weight: 800; font-size: 12px;
+  border: 1px solid rgba(255,255,255,.12);
+}
+.badgeMesa { background: rgba(255, 193, 7, .16); color: #ffd35a; border-color: rgba(255,193,7,.25); }
+.badgePsico { background: rgba(244, 67, 54, .16); color: #ff8a80; border-color: rgba(244,67,54,.25); }
+.itemRow.nextMesa { box-shadow: inset 0 0 0 1px rgba(255,193,7,.35); }
+.itemRow.nextPsico { box-shadow: inset 0 0 0 1px rgba(244,67,54,.35); }
+
