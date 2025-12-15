@@ -4,52 +4,97 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Chamada de Médiuns</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="./style.css" />
 </head>
 
 <body>
-  <main class="container">
-    <h1>Chamada de Médiuns</h1>
-    <p class="sub">Reunião: terça-feira 18:30 (exceto feriados)</p>
+  <div class="page">
+    <header class="hero">
+      <h1>Chamada de Médiuns</h1>
+      <p class="sub">Reunião: terça-feira 18:30 (exceto feriados)</p>
 
-    <section class="card">
-      <div class="status-row">
-        <div id="statusPill" class="pill ok">
-          <span id="statusText">Conectado</span>
+      <div class="card topCard">
+        <div class="topRow">
+          <div class="pill" id="statusPill">● Conectando...</div>
+          <div class="statusText" id="statusText"></div>
         </div>
-        <div id="msgTopo" class="msg-topo"></div>
+
+        <div class="formRow">
+          <div class="field">
+            <label for="dataChamada">Data da chamada</label>
+            <input id="dataChamada" type="date" />
+          </div>
+
+          <button id="btnVerificar" class="btn btnGhost" type="button">Verificar data</button>
+          <button id="btnSalvar" class="btn btnGreen" type="button">Salvar chamada</button>
+        </div>
+
+        <div class="msg ok" id="msgTopo"></div>
+        <div class="msg err" id="msgErro"></div>
+
+        <div class="statsBar">
+          <div class="statBox">
+            <div class="statTitle">Resumo geral</div>
+            <div class="statValue" id="resumoGeral">—</div>
+          </div>
+          <div class="statBox">
+            <div class="statTitle">Reservas da mesa (M)</div>
+            <div class="statValue" id="reservasMesa">—</div>
+          </div>
+        </div>
       </div>
+    </header>
 
-      <div class="form-row">
-        <div class="field">
-          <label for="dataChamada">Data da chamada</label>
-          <input id="dataChamada" type="text" placeholder="dd/mm/aaaa" />
+    <main class="content">
+
+      <section class="sec">
+        <div class="secHead">
+          <h2>Dirigentes</h2>
+          <div class="secResumo" id="resumoDirigentes">—</div>
         </div>
+        <div class="list" id="listaDirigentes"></div>
+      </section>
 
-        <div class="actions">
-          <button id="btnVerificar" type="button" class="btn">Verificar data</button>
-          <button id="btnSalvar" type="button" class="btn btn-primary">Salvar chamada</button>
+      <section class="sec">
+        <div class="secHead">
+          <h2>Médiuns de Incorporação</h2>
+          <div class="secResumo" id="resumoIncorporacao">—</div>
         </div>
-      </div>
+        <div class="list" id="listaIncorporacao"></div>
+      </section>
 
-      <div id="msgErro" class="msg-erro"></div>
-      <div class="msg-rodape" id="msgRodape">Pronto</div>
-    </section>
+      <section class="sec">
+        <div class="secHead">
+          <h2>Médiuns de Sustentação</h2>
+          <div class="secResumo" id="resumoSustentacao">—</div>
+        </div>
+        <div class="list" id="listaSustentacao"></div>
+      </section>
 
-    <h2>Dirigentes</h2>
-    <div id="listaDirigentes" class="lista"></div>
+      <section class="sec">
+        <div class="secHead">
+          <h2>Médiuns em Desenvolvimento</h2>
+          <div class="secResumo" id="resumoDesenvolvimento">—</div>
+        </div>
+        <div class="list" id="listaDesenvolvimento"></div>
+      </section>
 
-    <h2>Médiuns de Incorporação</h2>
-    <div id="listaIncorporacao" class="lista"></div>
+      <section class="sec">
+        <div class="secHead">
+          <h2>Médiuns em Carência</h2>
+          <div class="secResumo" id="resumoCarencia">—</div>
+        </div>
+        <p class="hint">Carência não senta na mesa (somente P/F).</p>
+        <div class="list" id="listaCarencia"></div>
+      </section>
 
-    <h2>Médiuns em Desenvolvimento</h2>
-    <div id="listaDesenvolvimento" class="lista"></div>
+    </main>
 
-    <h2>Médiuns em Carência</h2>
-    <div id="listaCarencia" class="lista"></div>
-  </main>
+    <footer class="foot">
+      <small>© Chamada Núcleo</small>
+    </footer>
+  </div>
 
-  <!-- MUITO IMPORTANTE: carregar o app.js no final -->
-  <script src="app.js"></script>
+  <script src="./app.js?v=5"></script>
 </body>
 </html>
