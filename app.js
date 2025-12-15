@@ -1,470 +1,514 @@
 /* =========================================================
-   CHAMADA DE MÉDIUNS - app.js (ESTÁVEL)
-   - NÃO usa service_role
-   - REST + headers (apikey + Authorization)
-   - Tabelas: public.mediums, public.chamadas, public.feriados
+   CHAMADA DE MÉDIUNS — FRONT DO ZERO (ESTÁVEL)
    ========================================================= */
 
-/** ✅ COLE AQUI (APENAS ANON PUBLIC KEY) */
-const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co"; // ex: https://xxxx.supabase.co
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5vdXp6eXJldnlrZG1ucWlmamp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUzOTYzMDIsImV4cCI6MjA4MDk3MjMwMn0.s2OzeSXe7CrKDNl6fXkTcMj_Vgitod0l0h0BiJA79nc";
+let sb = null;
 
-/** ✅ NOMES DO SEU BANCO (conforme print) */
-const TB_MEDIUMS   = "mediums";
-const TB_CHAMADAS  = "chamadas";
-const TB_FERIADOS  = "feriados";
+let mediums = [];
+let rotacao = [];
+let feriados = [];
 
-const COL_DATE     = "data";
-const COL_MEDIUMID = "medium_id";
-const COL_STATUS   = "status";
-
-/** ===== IDs UI ===== */
 const $ = (id) => document.getElementById(id);
 
-const elStatusPill = $("statusPill");
-const elStatusText = $("statusText");
-const elMsgTopo = $("msgTopo");
-const elMsgErro = $("msgErro");
-
-const elData = $("dataChamada");
-const btnVerificar = $("btnVerificar");
-const btnSalvar = $("btnSalvar");
-
-const elResumoGeral = $("resumoGeral");
-const elReservasMesa = $("reservasMesa");
-
-const listaDirigentes = $("listaDirigentes");
-const listaIncorporacao = $("listaIncorporacao");
-const listaSustentacao = $("listaSustentacao");
-const listaDesenvolvimento = $("listaDesenvolvimento");
-const listaCarencia = $("listaCarencia");
-
-const resumoDirigentes = $("resumoDirigentes");
-const resumoIncorporacao = $("resumoIncorporacao");
-const resumoSustentacao = $("resumoSustentacao");
-const resumoDesenvolvimento = $("resumoDesenvolvimento");
-const resumoCarencia = $("resumoCarencia");
-
-/** ===== Estado ===== */
-let feriadosSet = new Set();          // YYYY-MM-DD
-let mediums = [];                     // {id,name,group_type}
-let statusPorMedium = new Map();      // medium_id -> "P"|"M"|"F"|"PS"|""  (PS só dirigentes)
-let dataAtual = "";
-
-/** ===== UI helpers ===== */
-function setMsg(okMsg = "", errMsg = "") {
-  elMsgTopo.textContent = okMsg || "";
-  elMsgErro.textContent = errMsg || "";
+function escapeHtml(str) {
+  return String(str || "")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;")
+    .replaceAll('"',"&quot;")
+    .replaceAll("'","&#039;");
 }
 
-function setPill(kind, text, sub = "") {
-  elStatusPill.className =
-    "pill " + (kind === "ok" ? "pill-ok" : kind === "bad" ? "pill-bad" : "pill-warn");
-  elStatusPill.textContent = text;
-  elStatusText.textContent = sub;
+function setConn(text, ok = true) {
+  const el = $("statusConn");
+  el.textContent = text;
+  el.style.borderColor = ok ? "rgba(32,209,122,.45)" : "rgba(255,75,75,.45)";
 }
 
-function isoFromInputDate(value) {
-  return (value || "").trim(); // input date já vem YYYY-MM-DD
+function setMsg(text) {
+  $("statusMsg").textContent = text || "";
 }
 
-function isTuesday(iso) {
-  const d = new Date(iso + "T12:00:00Z");
-  return d.getUTCDay() === 2;
+function todayISO() {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth()+1).padStart(2,"0");
+  const dd = String(d.getDate()).padStart(2,"0");
+  return `${yyyy}-${mm}-${dd}`;
 }
 
-function prettyBR(iso) {
-  if (!iso) return "";
-  const [y, m, d] = iso.split("-");
-  return `${d}/${m}/${y}`;
+// Para não dar bug de fuso: força horário BR
+function getDayBR(iso) {
+  const d = new Date(`${iso}T03:00:00`);
+  return d.getDay(); // 0 dom ... 2 ter
 }
 
-function safeJsonParse(text) {
-  try { return JSON.parse(text); } catch { return null; }
+/* =========================
+   LOADERS
+   ========================= */
+
+async function testarSelect() {
+  const { error } = await sb.from("mediums").select("id").limit(1);
+  if (error) throw error;
 }
 
-/** ===== Supabase REST ===== */
-function supaHeaders() {
+async function carregarMediums() {
+  const { data, error } = await sb.from("mediums").select("*").order("name", { ascending: true });
+  if (error) throw error;
+
+  mediums = (data || []).map(m => ({
+    ...m,
+    name: String(m.name || "").trim(),
+    active: m.active !== false
+  }));
+}
+
+async function carregarRotacao() {
+  const { data, error } = await sb.from("rotacao").select("*");
+  if (error) throw error;
+  rotacao = data || [];
+}
+
+async function carregarFeriados() {
+  const { data, error } = await sb.from("feriados").select("*");
+  if (error) throw error;
+  feriados = data || [];
+}
+
+function isFeriado(iso) {
+  return feriados.some(f => {
+    const v = f.data || f.date || f.dia;
+    return String(v || "").slice(0,10) === iso;
+  });
+}
+
+/* =========================
+   ROTAÇÃO (dirigente mesa/ps)
+   ========================= */
+
+function getRotRow(groupType) {
+  return rotacao.find(r => r.group_type === groupType) || null;
+}
+
+function rotKeysForGroup(row) {
+  const keys = Object.keys(row || {});
+  const pick = (cands) => cands.find(k => keys.includes(k)) || null;
+
+  // tenta várias possibilidades (pra não depender do schema exato)
+  const mesaKey = pick(["last_mesa_id","last_medium_id","last_id","last"]);
+  const psKey   = pick(["last_ps_id","last_psicografia_id","last_psico_id","last_ps","last_psicografia"]);
+
+  return { mesaKey, psKey };
+}
+
+function nextFromRotation(list, lastId) {
+  if (!list.length) return null;
+  if (!lastId) return list[0].id;
+
+  const idx = list.findIndex(m => m.id === lastId);
+  if (idx === -1) return list[0].id;
+  return list[(idx + 1) % list.length].id;
+}
+
+function computeNextDirigentes() {
+  const dirigentes = mediums
+    .filter(m => m.active)
+    .filter(m => m.group_type === "dirigente")
+    .sort((a,b)=> String(a.name).localeCompare(String(b.name), "pt-BR"));
+
+  const rot = getRotRow("dirigente") || {};
+  const { mesaKey, psKey } = rotKeysForGroup(rot);
+
+  const lastMesa = mesaKey ? rot[mesaKey] : null;
+  const lastPs   = psKey ? rot[psKey] : null;
+
   return {
-    "apikey": SUPABASE_ANON_KEY,
-    "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
-    "Content-Type": "application/json",
+    dirigentes,
+    mesaKey,
+    psKey,
+    nextMesaId: nextFromRotation(dirigentes, lastMesa),
+    nextPsId: nextFromRotation(dirigentes, lastPs),
   };
 }
 
-async function supaGet(path) {
-  const url = `${SUPABASE_URL}/rest/v1/${path}`;
-  const r = await fetch(url, { headers: supaHeaders() });
-  const t = await r.text();
-  if (!r.ok) {
-    const j = safeJsonParse(t);
-    throw new Error(j?.message || t || `HTTP ${r.status}`);
-  }
-  return safeJsonParse(t) ?? [];
-}
+/* =========================
+   UI: DATA
+   ========================= */
 
-async function supaDeleteChamadasByDate(iso) {
-  // DELETE /chamadas?data=eq.2025-12-02
-  const url = `${SUPABASE_URL}/rest/v1/${TB_CHAMADAS}?${COL_DATE}=eq.${encodeURIComponent(iso)}`;
-  const r = await fetch(url, {
-    method: "DELETE",
-    headers: {
-      ...supaHeaders(),
-      "Prefer": "return=minimal",
-    },
-  });
-  const t = await r.text();
-  if (!r.ok) {
-    const j = safeJsonParse(t);
-    throw new Error(j?.message || t || `HTTP ${r.status}`);
-  }
-}
+async function verificarDataUI() {
+  const iso = $("dataChamada").value;
+  const aviso = $("avisoData");
+  aviso.textContent = "";
 
-async function supaInsertChamadas(rows) {
-  const url = `${SUPABASE_URL}/rest/v1/${TB_CHAMADAS}`;
-  const r = await fetch(url, {
-    method: "POST",
-    headers: {
-      ...supaHeaders(),
-      "Prefer": "return=minimal",
-    },
-    body: JSON.stringify(rows),
-  });
-  const t = await r.text();
-  if (!r.ok) {
-    const j = safeJsonParse(t);
-    throw new Error(j?.message || t || `HTTP ${r.status}`);
-  }
-}
+  if (!iso) { aviso.textContent = "Selecione uma data."; return false; }
+  if (getDayBR(iso) !== 2) { aviso.textContent = "❌ Chamada só pode ser feita em TERÇA-FEIRA."; return false; }
 
-/** ===== Grupos ===== */
-function normGroup(g) {
-  return (g || "").toLowerCase().trim();
-}
-
-function groupKeyFromDB(group_type) {
-  const k = normGroup(group_type);
-  if (k.includes("dir")) return "dirigentes";
-  if (k.includes("inc")) return "incorporacao";
-  if (k.includes("sus")) return "sustentacao";
-  if (k.includes("des")) return "desenvolvimento";
-  if (k.includes("car")) return "carencia";
-  return "desenvolvimento";
-}
-
-function allowedOptionsForGroup(groupKey) {
-  // PS só em Dirigentes; Carência só P/F
-  if (groupKey === "dirigentes") return ["P", "M", "F", "PS"];
-  if (groupKey === "carencia") return ["P", "F"];
-  return ["P", "M", "F"];
-}
-
-/** ===== Percentuais ===== */
-function calcResumo(statusList) {
-  let P = 0, M = 0, F = 0, PS = 0;
-  for (const s of statusList) {
-    if (s === "P") P++;
-    else if (s === "M") M++;
-    else if (s === "F") F++;
-    else if (s === "PS") PS++;
-  }
-  const totalPMF = P + M + F;
-  const presenca = P + M;
-  const percPres = totalPMF ? Math.round((presenca / totalPMF) * 100) : 0;
-  const percFalta = totalPMF ? Math.round((F / totalPMF) * 100) : 0;
-  return { P, M, F, PS, totalPMF, presenca, percPres, percFalta };
-}
-
-function resumoText(r) {
-  const base = `P:${r.P}  M:${r.M}  F:${r.F}`;
-  const ps = r.PS ? `  PS:${r.PS}` : "";
-  const perc = r.totalPMF ? `  | Presença: ${r.percPres}%  | Faltas: ${r.percFalta}%` : `  | —`;
-  return base + ps + perc;
-}
-
-/** ===== Render ===== */
-function clearLists() {
-  listaDirigentes.innerHTML = "";
-  listaIncorporacao.innerHTML = "";
-  listaSustentacao.innerHTML = "";
-  listaDesenvolvimento.innerHTML = "";
-  listaCarencia.innerHTML = "";
-}
-
-function renderAll() {
-  clearLists();
-
-  const groups = {
-    dirigentes: [],
-    incorporacao: [],
-    sustentacao: [],
-    desenvolvimento: [],
-    carencia: [],
-  };
-
-  for (const m of mediums) {
-    const key = groupKeyFromDB(m.group_type);
-    groups[key].push(m);
+  try {
+    await carregarFeriados();
+  } catch (e) {
+    aviso.textContent = "⚠️ Falha ao consultar feriados (verifique policy SELECT em feriados).";
+    return true; // não bloqueia
   }
 
-  renderGroup("dirigentes", groups.dirigentes, listaDirigentes, resumoDirigentes);
-  renderGroup("incorporacao", groups.incorporacao, listaIncorporacao, resumoIncorporacao);
-  renderGroup("sustentacao", groups.sustentacao, listaSustentacao, resumoSustentacao);
-  renderGroup("desenvolvimento", groups.desenvolvimento, listaDesenvolvimento, resumoDesenvolvimento);
-  renderGroup("carencia", groups.carencia, listaCarencia, resumoCarencia);
+  if (isFeriado(iso)) { aviso.textContent = "❌ Hoje é feriado! Chamada não permitida."; return false; }
 
-  renderResumoGeral(groups);
-}
-
-function renderGroup(groupKey, arr, container, resumoEl) {
-  arr.sort((a, b) => (a.name || "").localeCompare((b.name || ""), "pt-BR"));
-
-  const opts = allowedOptionsForGroup(groupKey);
-
-  const statusList = arr.map(m => statusPorMedium.get(m.id) || "").filter(Boolean);
-  const r = calcResumo(statusList);
-  resumoEl.textContent = `(${arr.length} nomes) ` + resumoText(r);
-
-  for (const m of arr) {
-    const current = (statusPorMedium.get(m.id) || "").toUpperCase();
-
-    const item = document.createElement("div");
-    item.className = "item";
-
-    // PS vermelho apenas Dirigentes
-    if (groupKey === "dirigentes" && current === "PS") {
-      item.classList.add("psicografia");
-    }
-
-    const left = document.createElement("div");
-    left.className = "left";
-    left.textContent = m.name || "(sem nome)";
-
-    const right = document.createElement("div");
-    right.className = "right";
-
-    const radios = document.createElement("div");
-    radios.className = "radios";
-
-    const rname = `m_${m.id}`;
-    for (const o of opts) {
-      const label = document.createElement("label");
-      label.className = "radioOpt";
-
-      const input = document.createElement("input");
-      input.type = "radio";
-      input.name = rname;
-      input.value = o;
-      input.checked = (current === o);
-
-      input.addEventListener("change", () => {
-        statusPorMedium.set(m.id, o);
-        renderAll();
-      });
-
-      label.appendChild(input);
-      label.appendChild(document.createTextNode(" " + o));
-      radios.appendChild(label);
-    }
-
-    const btnLimpar = document.createElement("button");
-    btnLimpar.className = "btnSmall";
-    btnLimpar.textContent = "Limpar";
-    btnLimpar.addEventListener("click", () => {
-      statusPorMedium.set(m.id, "");
-      renderAll();
-    });
-
-    right.appendChild(radios);
-    right.appendChild(btnLimpar);
-
-    item.appendChild(left);
-    item.appendChild(right);
-    container.appendChild(item);
-  }
-}
-
-function renderResumoGeral(groups) {
-  const all = [
-    ...groups.dirigentes,
-    ...groups.incorporacao,
-    ...groups.sustentacao,
-    ...groups.desenvolvimento,
-    ...groups.carencia,
-  ];
-
-  const statusList = all.map(m => statusPorMedium.get(m.id) || "").filter(Boolean);
-  const r = calcResumo(statusList);
-  elResumoGeral.textContent = resumoText(r);
-
-  const mesaNames = [];
-  for (const m of all) {
-    if ((statusPorMedium.get(m.id) || "").toUpperCase() === "M") {
-      mesaNames.push(m.name);
-    }
-  }
-  mesaNames.sort((a, b) => (a || "").localeCompare((b || ""), "pt-BR"));
-  elReservasMesa.textContent = mesaNames.length ? mesaNames.join(", ") : "—";
-}
-
-/** ===== Data / feriados ===== */
-async function verificarData() {
-  const iso = isoFromInputDate(elData.value);
-  setMsg("", "");
-
-  if (!iso) { setMsg("", "Escolha uma data."); return false; }
-  if (!isTuesday(iso)) { setMsg("", "A reunião é na terça-feira. Escolha uma terça."); return false; }
-  if (feriadosSet.has(iso)) { setMsg("", "Essa data é feriado. Não pode haver reunião."); return false; }
-
-  setMsg("Data válida.", "");
+  aviso.textContent = "✅ Data válida.";
   return true;
 }
 
-/** ===== Load ===== */
-async function loadFeriados() {
-  const rows = await supaGet(`${TB_FERIADOS}?select=${COL_DATE}`);
-  feriadosSet = new Set(rows.map(r => r[COL_DATE]).filter(Boolean));
+/* =========================
+   UI: RENDER
+   ========================= */
+
+function pctFalta(m) {
+  const f = Number(m.faltas || 0);
+  const p = Number(m.presencas || 0);
+  const t = f + p;
+  if (!t) return 0;
+  return Math.round((f * 100) / t);
 }
 
-async function loadMediums() {
-  const rows = await supaGet(`${TB_MEDIUMS}?select=id,name,group_type&order=name.asc`);
-  mediums = rows || [];
+function makeRadio(name, value, label) {
+  const id = `${name}_${value}_${Math.random().toString(16).slice(2)}`;
+  return `
+    <label class="r" for="${id}">
+      <input id="${id}" type="radio" name="${name}" value="${value}">
+      <span>${label}</span>
+    </label>
+  `;
 }
 
-async function loadChamadasByDate(iso) {
-  // /chamadas?select=medium_id,status&data=eq.2025-12-02
-  const rows = await supaGet(
-    `${TB_CHAMADAS}?select=${COL_MEDIUMID},${COL_STATUS}&${COL_DATE}=eq.${encodeURIComponent(iso)}`
-  );
+function renderGrupo(divId, lista, opts) {
+  const el = $(divId);
 
-  statusPorMedium = new Map();
-  for (const r of rows) {
-    const mid = r[COL_MEDIUMID];
-    const st = (r[COL_STATUS] || "").toUpperCase();
-    if (mid) statusPorMedium.set(mid, st);
-  }
-
-  // segurança: PS não pode aparecer fora de Dirigentes
-  for (const m of mediums) {
-    const g = groupKeyFromDB(m.group_type);
-    const st = statusPorMedium.get(m.id);
-    if (st === "PS" && g !== "dirigentes") statusPorMedium.set(m.id, "");
-  }
-}
-
-/** ===== Save ===== */
-async function salvar() {
-  setMsg("", "");
-
-  const iso = isoFromInputDate(elData.value);
-  if (!iso) { setMsg("", "Escolha uma data."); return; }
-
-  const ok = await verificarData();
-  if (!ok) return;
-
-  // monta INSERT
-  const rows = [];
-  for (const m of mediums) {
-    const g = groupKeyFromDB(m.group_type);
-    const allowed = allowedOptionsForGroup(g);
-    let st = (statusPorMedium.get(m.id) || "").toUpperCase();
-
-    if (st && !allowed.includes(st)) st = "";
-    if (st) {
-      rows.push({
-        [COL_MEDIUMID]: m.id,
-        [COL_DATE]: iso,
-        [COL_STATUS]: st,
-      });
-    }
-  }
-
-  btnSalvar.disabled = true;
-  btnSalvar.textContent = "Salvando...";
-
-  try {
-    // estratégia imbatível: apaga a data e re-insere
-    await supaDeleteChamadasByDate(iso);
-    if (rows.length) await supaInsertChamadas(rows);
-
-    setMsg("Chamada salva com sucesso ✅", "");
-    await loadChamadasByDate(iso);
-    renderAll();
-  } catch (e) {
-    setMsg("", "Erro ao salvar: " + (e?.message || e));
-  } finally {
-    btnSalvar.disabled = false;
-    btnSalvar.textContent = "Salvar chamada";
-  }
-}
-
-/** ===== Conexão ===== */
-async function testConnection() {
-  await supaGet(`${TB_MEDIUMS}?select=id&limit=1`);
-}
-
-/** ===== Boot ===== */
-async function boot() {
-  setPill("warn", "● Conectando...", "Testando chave e endpoint...");
-
-  if (!SUPABASE_URL.includes("supabase.co") || SUPABASE_ANON_KEY.includes("COLE_SUA")) {
-    setPill("bad", "● Erro", "Cole SUPABASE_URL e SUPABASE_ANON_KEY no app.js");
+  if (!lista.length) {
+    el.innerHTML = `<div class="item"><div class="item__left"><div class="muted">Nenhum médium neste grupo.</div></div></div>`;
     return;
   }
 
-  try {
-    await testConnection();
-    setPill("ok", "● Conectado ✅", "Supabase OK");
+  const { groupType, nextMesaId, nextPsId } = opts;
 
-    await loadFeriados();
-    await loadMediums();
+  el.innerHTML = lista.map(m => {
+    const p = pctFalta(m);
+    const faltaAlta = p >= 30;
 
-    // tenta hoje (se terça e não feriado)
-    const hoje = new Date();
-    const isoHoje = new Date(Date.UTC(hoje.getFullYear(), hoje.getMonth(), hoje.getDate(), 12, 0, 0))
-      .toISOString()
-      .slice(0, 10);
-
-    if (isTuesday(isoHoje) && !feriadosSet.has(isoHoje)) {
-      elData.value = isoHoje;
-      dataAtual = isoHoje;
-      await loadChamadasByDate(isoHoje);
+    let radios = "";
+    if (groupType === "carencia") {
+      radios += makeRadio(`st_${m.id}`, "P", "P");
+      radios += makeRadio(`st_${m.id}`, "F", "F");
+    } else if (groupType === "dirigente") {
+      radios += makeRadio(`st_${m.id}`, "P", "P");
+      radios += makeRadio(`st_${m.id}`, "M", "M");
+      radios += makeRadio(`st_${m.id}`, "F", "F");
+      radios += makeRadio(`st_${m.id}`, "PS", "PS");
     } else {
-      dataAtual = "";
-      statusPorMedium = new Map();
+      radios += makeRadio(`st_${m.id}`, "P", "P");
+      radios += makeRadio(`st_${m.id}`, "M", "M");
+      radios += makeRadio(`st_${m.id}`, "F", "F");
     }
 
-    renderAll();
-    setMsg("Selecione a data e clique em “Verificar data”.", "");
+    let cls = "item";
+    let tag = "";
 
+    if (groupType === "dirigente") {
+      const isMesa = m.id === nextMesaId;
+      const isPs = m.id === nextPsId;
+
+      if (isMesa && isPs) cls += " nextBoth";
+      else if (isMesa) cls += " nextMesa";
+      else if (isPs) cls += " nextPs";
+
+      if (isMesa) tag += `<span class="tagNext">PRÓXIMO (MESA)</span>`;
+      if (isPs) tag += `<span class="tagNext">PRÓXIMO (PS)</span>`;
+    }
+
+    return `
+      <div class="${cls}">
+        <div class="item__left">
+          <div class="item__name">
+            ${escapeHtml(m.name)}
+            <span class="badge ${faltaAlta ? "badge--danger":""}">${p}% faltas</span>
+          </div>
+        </div>
+        <div class="item__radios">${radios}</div>
+        <div class="item__right">${tag}</div>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderChamada() {
+  const ativos = mediums.filter(m => m.active);
+
+  const { dirigentes, nextMesaId, nextPsId } = computeNextDirigentes();
+  const incorporacao = ativos.filter(m => m.group_type === "incorporacao");
+  const desenvolvimento = ativos.filter(m => m.group_type === "desenvolvimento");
+  const carencia = ativos.filter(m => m.group_type === "carencia");
+
+  renderGrupo("listaDirigentes", dirigentes, { groupType: "dirigente", nextMesaId, nextPsId });
+  renderGrupo("listaIncorporacao", incorporacao, { groupType: "incorporacao" });
+  renderGrupo("listaDesenvolvimento", desenvolvimento, { groupType: "desenvolvimento" });
+  renderGrupo("listaCarencia", carencia, { groupType: "carencia" });
+}
+
+/* =========================
+   SALVAR CHAMADA
+   ========================= */
+
+function selectedStatusFor(id) {
+  const el = document.querySelector(`input[name="st_${id}"]:checked`);
+  return el ? el.value : null;
+}
+
+async function salvarChamada() {
+  $("resultadoSalvar").textContent = "";
+
+  const ok = await verificarDataUI();
+  if (!ok) { $("resultadoSalvar").textContent = "Corrija a data antes de salvar."; return; }
+
+  const iso = $("dataChamada").value;
+
+  const registros = [];
+  for (const m of mediums.filter(x => x.active)) {
+    const st = selectedStatusFor(m.id);
+    if (!st) continue;
+    registros.push({ medium_id: m.id, data: iso, status: st });
+  }
+
+  if (!registros.length) { $("resultadoSalvar").textContent = "Nenhuma presença marcada."; return; }
+
+  // 1) INSERT chamadas
+  const { error: errIns } = await sb.from("chamadas").insert(registros);
+  if (errIns) {
+    $("resultadoSalvar").textContent = `❌ Erro ao salvar chamadas: ${errIns.message}`;
+    return;
+  }
+
+  // 2) update presencas/faltas (PS conta como presença)
+  for (const r of registros) {
+    const m = mediums.find(x => x.id === r.medium_id);
+    const pres = Number(m?.presencas || 0) + (r.status === "F" ? 0 : 1);
+    const falt = Number(m?.faltas || 0) + (r.status === "F" ? 1 : 0);
+
+    const { error: eUp } = await sb.from("mediums").update({ presencas: pres, faltas: falt }).eq("id", r.medium_id);
+    if (eUp) {
+      $("resultadoSalvar").textContent = `⚠️ Chamadas salvas, mas não consegui atualizar estatísticas (RLS): ${eUp.message}`;
+      break;
+    }
+  }
+
+  // 3) tentativa de atualizar rotação (se permitido)
+  try {
+    await carregarRotacao();
+    const { mesaKey, psKey } = rotKeysForGroup(getRotRow("dirigente") || {});
+    const rotRow = getRotRow("dirigente");
+
+    let marcouMesaId = null;
+    let marcouPsId = null;
+
+    const idsDir = new Set(mediums.filter(m=>m.active && m.group_type==="dirigente").map(m=>m.id));
+    for (const r of registros) {
+      if (!idsDir.has(r.medium_id)) continue;
+      if (r.status === "M") marcouMesaId = r.medium_id;
+      if (r.status === "PS") marcouPsId = r.medium_id;
+    }
+
+    if (rotRow && (marcouMesaId || marcouPsId)) {
+      const payload = {};
+      if (mesaKey && marcouMesaId) payload[mesaKey] = marcouMesaId;
+      if (psKey && marcouPsId) payload[psKey] = marcouPsId;
+
+      if (Object.keys(payload).length) {
+        const { error: eRot } = await sb.from("rotacao").update(payload).eq("group_type", "dirigente");
+        if (eRot) {
+          $("resultadoSalvar").textContent = `⚠️ Chamadas salvas, mas rotação não atualizou (RLS): ${eRot.message}`;
+        }
+      }
+    }
+  } catch {}
+
+  await carregarTudo();
+  $("resultadoSalvar").textContent = "✅ Chamada registrada!";
+}
+
+/* =========================
+   PARTICIPANTES (admin)
+   ========================= */
+
+function groupLabel(g) {
+  if (g === "dirigente") return "Dirigente";
+  if (g === "incorporacao") return "Incorporação";
+  if (g === "desenvolvimento") return "Desenvolvimento";
+  if (g === "carencia") return "Carência";
+  return g;
+}
+
+function renderAdminList() {
+  const q = ($("busca").value || "").toLowerCase().trim();
+
+  const list = mediums
+    .slice()
+    .sort((a,b)=> String(a.name).localeCompare(String(b.name), "pt-BR"))
+    .filter(m => !q || String(m.name).toLowerCase().includes(q));
+
+  const el = $("listaAdmin");
+  el.innerHTML = list.map(m => `
+    <div class="adminRow">
+      <div>
+        <div style="font-weight:950">${escapeHtml(m.name)}</div>
+        <small>${groupLabel(m.group_type)}</small>
+      </div>
+      <div class="switch">
+        <span>Ativo</span>
+        <input type="checkbox" ${m.active ? "checked":""} data-act="${m.id}">
+      </div>
+      <div class="adminActions">
+        <button class="btnMini" data-edit="${m.id}">Editar</button>
+        <button class="btnMini btnMini--danger" data-del="${m.id}">Excluir</button>
+      </div>
+    </div>
+  `).join("");
+
+  el.querySelectorAll("input[data-act]").forEach(chk => {
+    chk.addEventListener("change", async (e) => {
+      const id = e.target.getAttribute("data-act");
+      const active = e.target.checked;
+      await updateMedium(id, { active });
+    });
+  });
+
+  el.querySelectorAll("button[data-edit]").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const id = e.target.getAttribute("data-edit");
+      await editarMediumPrompt(id);
+    });
+  });
+
+  el.querySelectorAll("button[data-del]").forEach(btn => {
+    btn.addEventListener("click", async (e) => {
+      const id = e.target.getAttribute("data-del");
+      if (!confirm("Excluir este participante?")) return;
+      await deleteMedium(id);
+    });
+  });
+}
+
+async function updateMedium(id, patch) {
+  $("msgAdmin").textContent = "";
+  try {
+    const { error } = await sb.from("mediums").update(patch).eq("id", id);
+    if (error) throw error;
+    await carregarTudo();
+    $("msgAdmin").textContent = "✅ Atualizado.";
   } catch (e) {
-    const msg = (e?.message || String(e));
-    setPill("bad", "● Erro", msg);
-    setMsg("", msg);
+    $("msgAdmin").textContent = `❌ Sem permissão (RLS) ou erro: ${e.message}`;
   }
 }
 
-/** ===== Eventos ===== */
-btnVerificar.addEventListener("click", async () => {
-  const ok = await verificarData();
-  if (!ok) return;
+async function deleteMedium(id) {
+  $("msgAdmin").textContent = "";
+  try {
+    const { error } = await sb.from("mediums").delete().eq("id", id);
+    if (error) throw error;
+    await carregarTudo();
+    $("msgAdmin").textContent = "✅ Excluído.";
+  } catch (e) {
+    $("msgAdmin").textContent = `❌ Sem permissão (RLS) ou erro: ${e.message}`;
+  }
+}
 
-  const iso = isoFromInputDate(elData.value);
-  if (!iso) return;
+async function editarMediumPrompt(id) {
+  const m = mediums.find(x => x.id === id);
+  if (!m) return;
 
-  if (iso !== dataAtual) {
-    dataAtual = iso;
-    setMsg("Carregando marcações da data " + prettyBR(iso) + "...", "");
-    try {
-      await loadChamadasByDate(iso);
-      renderAll();
-      setMsg("Pronto.", "");
-    } catch (e) {
-      setMsg("", "Erro ao carregar marcações: " + (e?.message || e));
+  const novoNome = prompt("Nome:", m.name);
+  if (novoNome === null) return;
+
+  const novoGrupo = prompt("Grupo (dirigente/incorporacao/desenvolvimento/carencia):", m.group_type);
+  if (novoGrupo === null) return;
+
+  await updateMedium(id, { name: novoNome.trim(), group_type: novoGrupo.trim() });
+}
+
+async function adicionarParticipante() {
+  $("msgAdmin").textContent = "";
+
+  const name = ($("novoNome").value || "").trim();
+  const group_type = $("novoGrupo").value;
+
+  if (!name) { $("msgAdmin").textContent = "Informe o nome."; return; }
+
+  try {
+    const payload = { name, group_type, active: true, faltas: 0, presencas: 0 };
+    const { error } = await sb.from("mediums").insert(payload);
+    if (error) throw error;
+
+    $("novoNome").value = "";
+    await carregarTudo();
+    $("msgAdmin").textContent = "✅ Adicionado.";
+  } catch (e) {
+    $("msgAdmin").textContent = `❌ Sem permissão (RLS) ou erro: ${e.message}`;
+  }
+}
+
+/* =========================
+   ABAS + BOOT
+   ========================= */
+
+function showTab(which) {
+  const isChamada = which === "chamada";
+  $("abaChamada").classList.toggle("hidden", !isChamada);
+  $("abaParticipantes").classList.toggle("hidden", isChamada);
+  $("btnTabChamada").classList.toggle("chip--active", isChamada);
+  $("btnTabParticipantes").classList.toggle("chip--active", !isChamada);
+}
+
+async function carregarTudo() {
+  setConn("Carregando…", true);
+  setMsg("");
+
+  await carregarMediums();
+  await carregarRotacao();
+
+  renderChamada();
+  renderAdminList();
+
+  // informa modo admin (se RLS bloquear)
+  $("statusAdmin").textContent =
+    "Se ações de editar/adicionar/excluir derem erro, é porque o banco está com RLS permitindo só SELECT para anon.";
+
+  setConn("Conectado ✅", true);
+}
+
+window.addEventListener("DOMContentLoaded", async () => {
+  try {
+    if (!window.supabase || !window.supabase.createClient) {
+      setConn("❌ supabase-js não carregou", false);
+      setMsg("Verifique o script do supabase-js no index.html (deve vir antes do app.js).");
+      return;
     }
+
+    const URL = window.__SUPABASE_URL__;
+    const KEY = window.__SUPABASE_ANON_KEY__;
+    sb = window.supabase.createClient(URL, KEY);
+
+    $("dataChamada").value = todayISO();
+    $("btnVerificarData").addEventListener("click", verificarDataUI);
+    $("btnSalvar").addEventListener("click", salvarChamada);
+
+    $("btnTabChamada").addEventListener("click", () => showTab("chamada"));
+    $("btnTabParticipantes").addEventListener("click", () => showTab("participantes"));
+
+    $("busca").addEventListener("input", renderAdminList);
+    $("btnAdicionar").addEventListener("click", adicionarParticipante);
+
+    setConn("Testando conexão…", true);
+    await testarSelect();
+
+    await carregarTudo();
+  } catch (e) {
+    setConn("❌ Erro ao conectar", false);
+    setMsg(e?.message || String(e));
+    console.error(e);
   }
 });
-
-btnSalvar.addEventListener("click", salvar);
-
-boot();
