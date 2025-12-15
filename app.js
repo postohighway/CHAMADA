@@ -25,387 +25,420 @@ const listaIncorporacao = $("listaIncorporacao");
 const listaDesenvolvimento = $("listaDesenvolvimento");
 const listaCarencia = $("listaCarencia");
 
-const boxResumo = $("resumoGeral");
-const boxReservasMesa = $("reservasMesa");
+const elResumoGeral = $("resumoGeral");
+const elReservasMesa = $("reservasMesa");
 
 /** ====== Estado ====== */
-let feriadosSet = new Set();     // YYYY-MM-DD
-let mediums = [];                // lista completa de mediums ativos
-let marcacoes = new Map();       // medium_id -> status (P/M/F/PS/"")
-let rotacao = { mesa: null, psicografia: null }; // last_medium_id por rotação
+let feriadosSet = new Set(); // YYYY-MM-DD
+let mediumsAll = [];         // todos ativos
+let chamadasMap = new Map(); // medium_id -> status (P/M/F/PS/"")
+let rotacao = { mesa: null, psicografia: null }; // last_medium_id
 
-/** ====== Util ====== */
-function setStatus(ok, msg) {
-  elStatusPill.classList.toggle("ok", !!ok);
-  elStatusPill.classList.toggle("warn", !ok);
-  elStatusText.textContent = msg || (ok ? "Conectado" : "Problema");
+let nextMesaId = null;
+let nextPsicoId = null;
+
+let currentDateISO = null;
+
+/** ====== Utils ====== */
+function setOk(msg = "Pronto") {
+  elMsgErro.textContent = "";
+  elMsgTopo.textContent = msg;
+}
+function setErro(msg) {
+  elMsgErro.textContent = msg;
+}
+function setConn(ok, msg) {
+  if (ok) {
+    elStatusPill.classList.add("ok");
+    elStatusPill.classList.remove("bad");
+    elStatusText.textContent = msg || "Supabase OK";
+  } else {
+    elStatusPill.classList.add("bad");
+    elStatusPill.classList.remove("ok");
+    elStatusText.textContent = msg || "Sem conexão";
+  }
 }
 
-function toast(msg, isErr=false) {
-  elMsgErro.style.display = isErr ? "block" : "none";
-  elMsgTopo.style.display = isErr ? "none" : "block";
-  (isErr ? elMsgErro : elMsgTopo).textContent = msg;
+function pad2(n) {
+  return String(n).padStart(2, "0");
 }
-
-function toISODate(inputValue) {
-  // aceita yyyy-mm-dd do input type=date
-  if (!inputValue) return null;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(inputValue)) return inputValue;
-
-  // aceita dd/mm/aaaa se você ainda usar texto em algum lugar
-  const m = inputValue.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+function parseBRtoISO(br) {
+  // aceita dd/mm/aaaa
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(br.trim());
   if (!m) return null;
-  return `${m[3]}-${m[2]}-${m[1]}`;
+  const dd = Number(m[1]), mm = Number(m[2]), yyyy = Number(m[3]);
+  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
+  return `${yyyy}-${pad2(mm)}-${pad2(dd)}`;
+}
+function isTuesday(iso) {
+  const d = new Date(iso + "T00:00:00");
+  return d.getDay() === 2; // 0 dom ... 2 ter
+}
+function formatISOtoBR(iso) {
+  const [y, m, d] = iso.split("-");
+  return `${d}/${m}/${y}`;
 }
 
-function isFeriado(iso) {
-  return feriadosSet.has(iso);
-}
-
-function headers() {
+function headersJson() {
   return {
-    "apikey": SUPABASE_ANON_KEY,
-    "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
     "Content-Type": "application/json",
   };
 }
 
 async function sbGet(path) {
   const url = `${SUPABASE_URL}/rest/v1/${path}`;
-  const r = await fetch(url, { headers: headers() });
-  if (!r.ok) throw new Error(await r.text());
+  const r = await fetch(url, { headers: headersJson() });
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(`${r.status} ${r.statusText}: ${t}`);
+  }
   return r.json();
 }
 
-async function sbPost(path, body) {
-  const url = `${SUPABASE_URL}/rest/v1/${path}`;
-  const r = await fetch(url, { method: "POST", headers: headers(), body: JSON.stringify(body) });
-  if (!r.ok) throw new Error(await r.text());
-  return r.text();
-}
-
-async function sbDelete(path) {
-  const url = `${SUPABASE_URL}/rest/v1/${path}`;
-  const r = await fetch(url, { method: "DELETE", headers: headers() });
-  if (!r.ok) throw new Error(await r.text());
-  return r.text();
-}
-
-/** ====== Carregamentos ====== */
-async function carregarFeriados() {
-  const rows = await sbGet(`feriados?select=data`);
-  feriadosSet = new Set(rows.map(x => x.data));
-}
-
-async function carregarMediums() {
-  // garante campos que precisamos
-  const rows = await sbGet(`mediums?select=id,name,group_type,active,presencas,faltas,mesa,psicografia&active=eq.true&order=name.asc`);
-  mediums = rows;
-}
-
-async function carregarRotacao() {
-  // rotacao: group_type ('mesa','psicografia'), last_medium_id
-  const rows = await sbGet(`rotacao?select=group_type,last_medium_id`);
-  rotacao = { mesa: null, psicografia: null };
-  for (const r of rows) {
-    if (r.group_type === "mesa") rotacao.mesa = r.last_medium_id;
-    if (r.group_type === "psicografia") rotacao.psicografia = r.last_medium_id;
+async function sbUpsert(table, rows) {
+  const url = `${SUPABASE_URL}/rest/v1/${table}?on_conflict=medium_id,data`;
+  const r = await fetch(url, {
+    method: "POST",
+    headers: {
+      ...headersJson(),
+      Prefer: "resolution=merge-duplicates,return=minimal",
+    },
+    body: JSON.stringify(rows),
+  });
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(`${r.status} ${r.statusText}: ${t}`);
   }
 }
 
-/** ====== Chamada (por data) ====== */
-async function carregarChamadaDoDia(iso) {
+async function sbPatchRotacao(group_type, last_medium_id) {
+  const url = `${SUPABASE_URL}/rest/v1/rotacao?group_type=eq.${encodeURIComponent(group_type)}`;
+  const r = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      ...headersJson(),
+      Prefer: "return=minimal",
+    },
+    body: JSON.stringify({ last_medium_id, updated_at: new Date().toISOString() }),
+  });
+  if (!r.ok) {
+    const t = await r.text();
+    throw new Error(`${r.status} ${r.statusText}: ${t}`);
+  }
+}
+
+/** ====== Carga inicial ====== */
+async function loadBase() {
+  // feriados
+  const fer = await sbGet(`feriados?select=data`);
+  feriadosSet = new Set(fer.map((x) => x.data));
+
+  // mediums (ativos)
+  // OBS: selecione também mesa/psicografia para elegibilidade da rotação
+  const meds = await sbGet(
+    `mediums?select=id,name,group_type,faltas,presencas,mesa,psicografia,active&active=eq.true&order=name.asc`
+  );
+  mediumsAll = meds;
+
+  // rotacao
+  const rot = await sbGet(`rotacao?select=group_type,last_medium_id`);
+  rotacao = { mesa: null, psicografia: null };
+  for (const r of rot) {
+    if (r.group_type === "mesa") rotacao.mesa = r.last_medium_id || null;
+    if (r.group_type === "psicografia") rotacao.psicografia = r.last_medium_id || null;
+  }
+}
+
+/** ====== Carregar chamadas do dia ====== */
+async function loadChamadasForDate(iso) {
+  // chamadas do dia (todas)
   const rows = await sbGet(`chamadas?select=medium_id,status&data=eq.${iso}`);
-  marcacoes = new Map();
-  for (const r of rows) marcacoes.set(r.medium_id, r.status);
+  chamadasMap = new Map(rows.map((r) => [r.medium_id, r.status || ""]));
 }
 
-/** ====== Rotação (cálculo do próximo) ====== */
-function proximoDaLista(lista, lastId) {
-  if (!lista.length) return null;
-  const idx = lastId ? lista.findIndex(x => x.id === lastId) : -1;
-  const next = lista[(idx + 1 + lista.length) % lista.length];
-  return next?.id || null;
+/** ====== Rotação (cálculo do próximo com fallback) ====== */
+function computeNextFromRotation(groupKey) {
+  // groupKey: "mesa" or "psicografia"
+  // Elegíveis: dirigentes ativos com mesa=1 (para mesa) ou psicografia=1 (para psicografia)
+  const eligible = mediumsAll
+    .filter((m) => m.group_type === "dirigente" && m.active === true)
+    .filter((m) => (groupKey === "mesa" ? Number(m.mesa) === 1 : Number(m.psicografia) === 1))
+    .sort((a, b) => (a.name || "").localeCompare(b.name || "", "pt-BR"));
+
+  if (eligible.length === 0) return null;
+
+  const lastId = rotacao[groupKey];
+
+  // se lastId não existir ou não estiver na lista -> fallback para o primeiro
+  const idx = eligible.findIndex((x) => x.id === lastId);
+  if (idx === -1) return eligible[0].id;
+
+  // próximo circular
+  const next = eligible[(idx + 1) % eligible.length];
+  return next.id;
 }
 
-function getDirigentes() {
-  return mediums.filter(m => m.group_type === "dirigente");
-}
-function getIncorporacao() {
-  return mediums.filter(m => m.group_type === "incorporacao");
-}
-function getDesenvolvimento() {
-  return mediums.filter(m => m.group_type === "desenvolvimento");
-}
-function getCarencia() {
-  return mediums.filter(m => m.group_type === "carencia");
+function recomputeRotationBadges() {
+  nextMesaId = computeNextFromRotation("mesa");
+  nextPsicoId = computeNextFromRotation("psicografia");
 }
 
-function getElegiveisMesa() {
-  // amarelo: dirigentes com flag mesa=1
-  return getDirigentes().filter(m => Number(m.mesa) === 1);
-}
-function getElegiveisPsico() {
-  // vermelho: dirigentes com flag psicografia=1
-  return getDirigentes().filter(m => Number(m.psicografia) === 1);
-}
-
-/** ====== UI Render ====== */
-function renderTudo() {
-  const dirigentes = getDirigentes();
-  const incorp = getIncorporacao();
-  const desenv = getDesenvolvimento();
-  const car = getCarencia();
-
-  // calcula próximos (amarelo/vermelho) SEPARADOS
-  const nextMesaId = proximoDaLista(getElegiveisMesa(), rotacao.mesa);
-  const nextPsicoId = proximoDaLista(getElegiveisPsico(), rotacao.psicografia);
-
-  renderGrupo(listaDirigentes, dirigentes, {
-    titulo: "Dirigentes",
-    opcoes: ["P","M","F","PS"],       // ✅ PS só aqui
-    highlightMesaId: nextMesaId,      // ✅ amarelo
-    highlightPsicoId: nextPsicoId,    // ✅ vermelho
-    mostraStats: true
-  });
-
-  renderGrupo(listaIncorporacao, incorp, {
-    titulo: "Médiuns de Incorporação",
-    opcoes: ["P","M","F"],            // ✅ volta M, sem PS
-    mostraStats: false
-  });
-
-  renderGrupo(listaDesenvolvimento, desenv, {
-    titulo: "Médiuns em Desenvolvimento",
-    opcoes: ["P","M","F"],            // ✅ volta M, sem PS
-    mostraStats: false
-  });
-
-  renderGrupo(listaCarencia, car, {
-    titulo: "Médiuns em Carência",
-    opcoes: ["P","M","F"],            // ✅ volta M, sem PS
-    mostraStats: false
-  });
-
-  renderResumo(dirigentes);
+/** ====== UI ====== */
+function buildStatusOptions(medium) {
+  // P / M / F para todos
+  // PS somente para dirigente
+  const base = ["P", "M", "F"];
+  if (medium.group_type === "dirigente") base.push("PS");
+  return base;
 }
 
-function renderGrupo(container, lista, cfg) {
-  container.innerHTML = "";
+function statusLabel(s) {
+  if (s === "P") return "P";
+  if (s === "M") return "M";
+  if (s === "F") return "F";
+  if (s === "PS") return "PS";
+  return "";
+}
 
-  for (const m of lista) {
-    const statusAtual = marcacoes.get(m.id) || "";
+function makeRow(m) {
+  const current = chamadasMap.get(m.id) || "";
 
-    const row = document.createElement("div");
-    row.className = "linhaMedium";
+  const wrap = document.createElement("div");
+  wrap.className = "itemRow";
 
-    // Destaques: amarelo e vermelho independentes
-    if (cfg.highlightMesaId && m.id === cfg.highlightMesaId) row.classList.add("hlMesa");
-    if (cfg.highlightPsicoId && m.id === cfg.highlightPsicoId) row.classList.add("hlPsico");
+  // destaque amarelo/vermelho só para dirigentes
+  if (m.group_type === "dirigente") {
+    if (m.id === nextMesaId) wrap.classList.add("nextMesa");
+    if (m.id === nextPsicoId) wrap.classList.add("nextPsico");
+  }
 
-    const nome = document.createElement("div");
-    nome.className = "nome";
-    nome.textContent = m.name;
+  const left = document.createElement("div");
+  left.className = "itemLeft";
 
-    const sub = document.createElement("div");
-    sub.className = "sub";
-    if (cfg.mostraStats) {
-      const pres = Number(m.presencas || 0);
-      const falt = Number(m.faltas || 0);
-      const total = pres + falt;
-      const pctPres = total ? Math.round((pres / total) * 100) : 0;
-      const pctFalt = total ? Math.round((falt / total) * 100) : 0;
-      sub.textContent = `Presenças: ${pres} | Faltas: ${falt} | Presença: ${pctPres}% | Faltas: ${pctFalt}%`;
-    } else {
-      sub.textContent = "";
-    }
+  const title = document.createElement("div");
+  title.className = "itemName";
+  title.textContent = m.name || "(sem nome)";
 
-    const controles = document.createElement("div");
-    controles.className = "controles";
+  const meta = document.createElement("div");
+  meta.className = "itemMeta";
 
-    // radios
-    for (const op of cfg.opcoes) {
-      const wrap = document.createElement("label");
-      wrap.className = "opcao";
+  // percentuais (com regra do Marcelo: % Presença=(P+M)/(P+M+F))
+  const pres = Number(m.presencas || 0);
+  const falt = Number(m.faltas || 0);
+  const denom = pres + falt;
+  const presPct = denom === 0 ? 0 : Math.round((pres / denom) * 100);
+  const faltPct = denom === 0 ? 0 : Math.round((falt / denom) * 100);
 
-      const r = document.createElement("input");
-      r.type = "radio";
-      r.name = `st_${m.id}`;
-      r.value = op;
-      r.checked = (statusAtual === op);
+  meta.textContent = `Presenças: ${pres} | Faltas: ${falt} | Presença: ${presPct}% | Faltas: ${faltPct}%`;
 
-      r.addEventListener("change", () => {
-        marcacoes.set(m.id, op);
-        renderResumo(getDirigentes()); // atualiza contadores
-      });
+  // badges de próximo
+  const badges = document.createElement("div");
+  badges.className = "badges";
 
-      const t = document.createElement("span");
-      t.textContent = op;
+  if (m.group_type === "dirigente" && m.id === nextMesaId) {
+    const b = document.createElement("span");
+    b.className = "badge badgeMesa";
+    b.textContent = "Mesa (próximo)";
+    badges.appendChild(b);
+  }
+  if (m.group_type === "dirigente" && m.id === nextPsicoId) {
+    const b = document.createElement("span");
+    b.className = "badge badgePsico";
+    b.textContent = "Psicografia (próximo)";
+    badges.appendChild(b);
+  }
 
-      wrap.appendChild(r);
-      wrap.appendChild(t);
-      controles.appendChild(wrap);
-    }
+  left.appendChild(title);
+  left.appendChild(meta);
+  left.appendChild(badges);
 
-    const btnLimpar = document.createElement("button");
-    btnLimpar.className = "btnLimpar";
-    btnLimpar.textContent = "Limpar";
-    btnLimpar.addEventListener("click", () => {
-      marcacoes.delete(m.id);
-      renderTudo();
+  const right = document.createElement("div");
+  right.className = "itemRight";
+
+  // radios
+  const opts = buildStatusOptions(m);
+  const radios = document.createElement("div");
+  radios.className = "radioGroup";
+
+  for (const s of opts) {
+    const id = `r_${m.id}_${s}`;
+
+    const lbl = document.createElement("label");
+    lbl.className = "radioLbl";
+    lbl.setAttribute("for", id);
+
+    const inp = document.createElement("input");
+    inp.type = "radio";
+    inp.name = `st_${m.id}`;
+    inp.id = id;
+    inp.value = s;
+    inp.checked = current === s;
+
+    inp.addEventListener("change", async () => {
+      chamadasMap.set(m.id, s);
+      renderResumo();
+      // salva imediatamente só este item
+      try {
+        await sbUpsert("chamadas", [{ medium_id: m.id, data: currentDateISO, status: s }]);
+        setOk("Salvo.");
+      } catch (e) {
+        setErro("Erro ao salvar marcação: " + e.message);
+      }
     });
 
-    row.appendChild(nome);
-    row.appendChild(sub);
-    row.appendChild(controles);
-    row.appendChild(btnLimpar);
+    const dot = document.createElement("span");
+    dot.className = "dot";
 
-    container.appendChild(row);
+    const txt = document.createElement("span");
+    txt.className = "radioTxt";
+    txt.textContent = statusLabel(s);
+
+    lbl.appendChild(dot);
+    lbl.appendChild(txt);
+
+    radios.appendChild(inp);
+    radios.appendChild(lbl);
   }
+
+  // limpar
+  const btn = document.createElement("button");
+  btn.className = "btnSmall";
+  btn.textContent = "Limpar";
+  btn.addEventListener("click", async () => {
+    chamadasMap.set(m.id, "");
+    renderAll(); // para desmarcar UI
+    try {
+      // apaga status do dia (deixa vazio)
+      await sbUpsert("chamadas", [{ medium_id: m.id, data: currentDateISO, status: "" }]);
+      setOk("Limpo.");
+    } catch (e) {
+      setErro("Erro ao limpar: " + e.message);
+    }
+  });
+
+  right.appendChild(radios);
+  right.appendChild(btn);
+
+  wrap.appendChild(left);
+  wrap.appendChild(right);
+  return wrap;
 }
 
-/** ====== Resumo / Reservas ====== */
-function renderResumo(dirigentes) {
-  // contagem do DIA (marcacoes)
-  let p=0,m=0,f=0,ps=0;
-  const reservasMesa = [];
+function clearLists() {
+  listaDirigentes.innerHTML = "";
+  listaIncorporacao.innerHTML = "";
+  listaDesenvolvimento.innerHTML = "";
+  listaCarencia.innerHTML = "";
+}
 
-  for (const d of dirigentes) {
-    const st = marcacoes.get(d.id);
-    if (!st) continue;
+function renderAll() {
+  clearLists();
+  recomputeRotationBadges();
+
+  const grupos = {
+    dirigente: listaDirigentes,
+    incorporacao: listaIncorporacao,
+    desenvolvimento: listaDesenvolvimento,
+    carencia: listaCarencia,
+  };
+
+  for (const m of mediumsAll) {
+    const target = grupos[m.group_type];
+    if (!target) continue;
+    target.appendChild(makeRow(m));
+  }
+
+  renderResumo();
+}
+
+function renderResumo() {
+  // contagem de status do dia
+  let p = 0, m = 0, f = 0, ps = 0;
+
+  // reservas mesa do dia (quem marcou M)
+  const reservas = [];
+
+  for (const med of mediumsAll) {
+    const st = (chamadasMap.get(med.id) || "").toUpperCase();
     if (st === "P") p++;
-    else if (st === "M") { m++; reservasMesa.push(d.name); }
-    else if (st === "F") f++;
-    else if (st === "PS") ps++;
+    if (st === "M") { m++; reservas.push(med.name); }
+    if (st === "F") f++;
+    if (st === "PS") ps++;
   }
 
-  const denom = (p+m+f);
-  const presPct = denom ? Math.round(((p+m)/denom)*100) : 0;
-  const faltPct = denom ? Math.round((f/denom)*100) : 0;
+  const totalMarcado = p + m + f + ps;
+  const presencaPct = (p + m + ps + f) === 0 ? 0 : Math.round(((p + m) / (p + m + f)) * 100); // regra: PS não entra como presença
+  const faltasPct = (p + m + f) === 0 ? 0 : Math.round((f / (p + m + f)) * 100);
 
-  if (boxResumo) {
-    boxResumo.textContent = `P:${p}  M:${m}  F:${f}  PS:${ps}  |  Presença:${presPct}%  |  Faltas:${faltPct}%`;
-  }
-  if (boxReservasMesa) {
-    boxReservasMesa.textContent = reservasMesa.length ? reservasMesa.join(", ") : "—";
-  }
+  elResumoGeral.textContent = `P:${p} M:${m} F:${f} PS:${ps} | Presença:${presencaPct}% | Faltas:${faltasPct}%`;
+
+  elReservasMesa.textContent = reservas.length ? reservas.join(", ") : "—";
 }
 
 /** ====== Verificar data ====== */
-async function verificarData() {
-  const iso = toISODate(elData.value);
-  if (!iso) { toast("Data inválida. Use o seletor.", true); return; }
+async function onVerificar() {
+  setErro("");
+  const val = elData.value;
 
-  if (isFeriado(iso)) {
-    toast("Essa data está marcada como feriado. (Você pode decidir não fazer chamada.)", false);
-  } else {
-    toast("Data válida.", false);
+  // aceita input type=date (YYYY-MM-DD) OU dd/mm/aaaa
+  let iso = null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(val)) iso = val;
+  else iso = parseBRtoISO(val);
+
+  if (!iso) {
+    setErro("Data inválida. Use dd/mm/aaaa ou selecione no calendário.");
+    return;
+  }
+  if (!isTuesday(iso)) {
+    setErro("Essa data não é terça-feira.");
+    return;
+  }
+  if (feriadosSet.has(iso)) {
+    setErro("Essa data está marcada como feriado.");
+    return;
   }
 
-  await carregarChamadaDoDia(iso);
-  renderTudo();
+  currentDateISO = iso;
+  setOk(`Data válida: ${formatISOtoBR(iso)}`);
+
+  await loadChamadasForDate(iso);
+  renderAll();
 }
 
-/** ====== Salvar chamada ====== */
-async function salvarChamada() {
-  const iso = toISODate(elData.value);
-  if (!iso) { toast("Selecione uma data antes de salvar.", true); return; }
-
-  // remove registros do dia e re-insere (simples e consistente)
-  await sbDelete(`chamadas?data=eq.${iso}`);
-
-  const payload = [];
-  for (const [medium_id, status] of marcacoes.entries()) {
-    if (!status) continue;
-    payload.push({ medium_id, data: iso, status });
+/** ====== Salvar chamada (tudo) ====== */
+async function onSalvarTudo() {
+  if (!currentDateISO) {
+    setErro("Selecione uma data e clique em Verificar data.");
+    return;
   }
 
-  if (payload.length) {
-    await sbPost(`chamadas`, payload);
-  }
-
-  toast("Chamada salva com sucesso.", false);
-
-  // 🔁 Atualiza rotações:
-  // - Mesa (amarelo) avança quando alguém foi marcado "M"
-  // - Psicografia (vermelho) avança quando alguém foi marcado "PS"
-  await atualizarRotacoesAposSalvar();
-
-  // recarrega rotação e redesenha (pra já aparecer novo amarelo/vermelho)
-  await carregarRotacao();
-  renderTudo();
-}
-
-async function atualizarRotacoesAposSalvar() {
-  // pega quem foi marcado hoje
-  let ultimoM = null;
-  let ultimoPS = null;
-
-  // regra: se tiver mais de um M/PS, pega o último na ordem da lista (nome)
-  // (pode ajustar depois, mas assim fica determinístico)
-  const dirigentes = getDirigentes();
-
-  for (const d of dirigentes) {
-    const st = marcacoes.get(d.id);
-    if (st === "M") ultimoM = d.id;
-    if (st === "PS") ultimoPS = d.id;
-  }
-
-  // se marcou alguém como M, set last_medium_id da rotação mesa
-  if (ultimoM) {
-    await sbPost("rotacao", [{
-      group_type: "mesa",
-      last_medium_id: ultimoM,
-      updated_at: new Date().toISOString()
-    }]).catch(async () => {
-      // se POST falhar por conflito, tenta PATCH
-      const url = `${SUPABASE_URL}/rest/v1/rotacao?group_type=eq.mesa`;
-      await fetch(url, {
-        method: "PATCH",
-        headers: headers(),
-        body: JSON.stringify({ last_medium_id: ultimoM, updated_at: new Date().toISOString() })
-      });
-    });
-  }
-
-  // se marcou alguém como PS, set last_medium_id da rotação psicografia
-  if (ultimoPS) {
-    await sbPost("rotacao", [{
-      group_type: "psicografia",
-      last_medium_id: ultimoPS,
-      updated_at: new Date().toISOString()
-    }]).catch(async () => {
-      const url = `${SUPABASE_URL}/rest/v1/rotacao?group_type=eq.psicografia`;
-      await fetch(url, {
-        method: "PATCH",
-        headers: headers(),
-        body: JSON.stringify({ last_medium_id: ultimoPS, updated_at: new Date().toISOString() })
-      });
-    });
+  try {
+    const rows = [];
+    for (const med of mediumsAll) {
+      const st = (chamadasMap.get(med.id) || "");
+      rows.push({ medium_id: med.id, data: currentDateISO, status: st });
+    }
+    await sbUpsert("chamadas", rows);
+    setOk("Chamada salva.");
+  } catch (e) {
+    setErro("Erro ao salvar chamada: " + e.message);
   }
 }
 
 /** ====== Boot ====== */
-async function boot() {
+(async function init() {
   try {
-    setStatus(false, "Conectando...");
-    await Promise.all([
-      carregarFeriados(),
-      carregarMediums(),
-      carregarRotacao()
-    ]);
-    setStatus(true, "Supabase OK");
-    toast("Selecione a data e clique em “Verificar data”.", false);
-    renderTudo();
+    setConn(false, "Conectando...");
+    await loadBase();
+    setConn(true, "Supabase OK");
+    setOk("Selecione a data e clique em “Verificar data”.");
   } catch (e) {
-    console.error(e);
-    setStatus(false, "Falha ao conectar");
-    toast(String(e), true);
+    setConn(false, "Erro");
+    setErro("Falha ao conectar no Supabase: " + e.message);
   }
-}
 
-/** ====== Eventos ====== */
-btnVerificar?.addEventListener("click", () => verificarData().catch(err => toast(String(err), true)));
-btnSalvar?.addEventListener("click", () => salvarChamada().catch(err => toast(String(err), true)));
-
-boot();
+  btnVerificar.addEventListener("click", onVerificar);
+  btnSalvar.addEventListener("click", onSalvarTudo);
+})();
