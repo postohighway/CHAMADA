@@ -9,7 +9,16 @@
 const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co"; // ex: https://xxxx.supabase.co
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5vdXp6eXJldnlrZG1ucWlmamp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUzOTYzMDIsImV4cCI6MjA4MDk3MjMwMn0.s2OzeSXe7CrKDNl6fXkTcMj_Vgitod0l0h0BiJA79nc";
 
-/** ====== IDs UI ====== */
+/** ✅ NOMES DO SEU BANCO (conforme print) */
+const TB_MEDIUMS   = "mediums";
+const TB_CHAMADAS  = "chamadas";
+const TB_FERIADOS  = "feriados";
+
+const COL_DATE     = "data";
+const COL_MEDIUMID = "medium_id";
+const COL_STATUS   = "status";
+
+/** ===== IDs UI ===== */
 const $ = (id) => document.getElementById(id);
 
 const elStatusPill = $("statusPill");
@@ -21,335 +30,441 @@ const elData = $("dataChamada");
 const btnVerificar = $("btnVerificar");
 const btnSalvar = $("btnSalvar");
 
+const elResumoGeral = $("resumoGeral");
+const elReservasMesa = $("reservasMesa");
+
 const listaDirigentes = $("listaDirigentes");
 const listaIncorporacao = $("listaIncorporacao");
+const listaSustentacao = $("listaSustentacao");
 const listaDesenvolvimento = $("listaDesenvolvimento");
 const listaCarencia = $("listaCarencia");
 
-/** ====== Headers ====== */
-const headers = {
-  apikey: SUPABASE_ANON_KEY,
-  Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-  "Content-Type": "application/json",
-};
+const resumoDirigentes = $("resumoDirigentes");
+const resumoIncorporacao = $("resumoIncorporacao");
+const resumoSustentacao = $("resumoSustentacao");
+const resumoDesenvolvimento = $("resumoDesenvolvimento");
+const resumoCarencia = $("resumoCarencia");
 
-/** ====== Estado ====== */
-let dataAtivaISO = null;           // YYYY-MM-DD
-let mediums = [];                  // lista do banco
-let marcacoes = new Map();         // medium_id -> status ("P","M","F","PS")
+/** ===== Estado ===== */
+let feriadosSet = new Set();          // YYYY-MM-DD
+let mediums = [];                     // {id,name,group_type}
+let statusPorMedium = new Map();      // medium_id -> "P"|"M"|"F"|"PS"|""  (PS só dirigentes)
+let dataAtual = "";
 
-/** ====== Helpers ====== */
-function setStatus(tipo, texto) {
-  // tipo: "ok" | "warn" | "err" | "load"
-  if (elStatusText) elStatusText.innerText = texto || "";
-
-  if (!elStatusPill) return;
-  elStatusPill.classList.remove("ok", "warn", "err", "load");
-
-  if (tipo) elStatusPill.classList.add(tipo);
+/** ===== UI helpers ===== */
+function setMsg(okMsg = "", errMsg = "") {
+  elMsgTopo.textContent = okMsg || "";
+  elMsgErro.textContent = errMsg || "";
 }
 
-function setTopo(msg) {
-  if (elMsgTopo) elMsgTopo.innerText = msg || "";
-}
-function setErro(msg) {
-  if (elMsgErro) elMsgErro.innerText = msg || "";
-}
-
-function ddmmyyyyToISO(ddmmyyyy) {
-  // aceita "09/12/2025"
-  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(ddmmyyyy.trim());
-  if (!m) return null;
-  const dd = Number(m[1]);
-  const mm = Number(m[2]);
-  const yyyy = Number(m[3]);
-  if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return null;
-  const iso = `${yyyy.toString().padStart(4,"0")}-${mm.toString().padStart(2,"0")}-${dd.toString().padStart(2,"0")}`;
-  return iso;
+function setPill(kind, text, sub = "") {
+  elStatusPill.className =
+    "pill " + (kind === "ok" ? "pill-ok" : kind === "bad" ? "pill-bad" : "pill-warn");
+  elStatusPill.textContent = text;
+  elStatusText.textContent = sub;
 }
 
-function todayISO() {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  const dd = String(d.getDate()).padStart(2, "0");
-  return `${yyyy}-${mm}-${dd}`;
+function isoFromInputDate(value) {
+  return (value || "").trim(); // input date já vem YYYY-MM-DD
+}
+
+function isTuesday(iso) {
+  const d = new Date(iso + "T12:00:00Z");
+  return d.getUTCDay() === 2;
+}
+
+function prettyBR(iso) {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-");
+  return `${d}/${m}/${y}`;
+}
+
+function safeJsonParse(text) {
+  try { return JSON.parse(text); } catch { return null; }
+}
+
+/** ===== Supabase REST ===== */
+function supaHeaders() {
+  return {
+    "apikey": SUPABASE_ANON_KEY,
+    "Authorization": `Bearer ${SUPABASE_ANON_KEY}`,
+    "Content-Type": "application/json",
+  };
 }
 
 async function supaGet(path) {
-  const url = `${SUPABASE_URL}${path}`;
-  const res = await fetch(url, { method: "GET", headers });
-  const txt = await res.text();
-  let json = null;
-  try { json = txt ? JSON.parse(txt) : null; } catch (_) {}
-  if (!res.ok) {
-    console.error("❌ GET erro", res.status, url, txt);
-    throw new Error(`GET ${res.status}: ${txt}`);
+  const url = `${SUPABASE_URL}/rest/v1/${path}`;
+  const r = await fetch(url, { headers: supaHeaders() });
+  const t = await r.text();
+  if (!r.ok) {
+    const j = safeJsonParse(t);
+    throw new Error(j?.message || t || `HTTP ${r.status}`);
   }
-  return json;
+  return safeJsonParse(t) ?? [];
 }
 
-async function supaPost(path, body) {
-  const url = `${SUPABASE_URL}${path}`;
-  const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body) });
-  const txt = await res.text();
-  let json = null;
-  try { json = txt ? JSON.parse(txt) : null; } catch (_) {}
-  if (!res.ok) {
-    console.error("❌ POST erro", res.status, url, txt);
-    throw new Error(`POST ${res.status}: ${txt}`);
-  }
-  return json;
-}
-
-async function supaDelete(path) {
-  const url = `${SUPABASE_URL}${path}`;
-  const res = await fetch(url, { method: "DELETE", headers });
-  const txt = await res.text();
-  if (!res.ok) {
-    console.error("❌ DELETE erro", res.status, url, txt);
-    throw new Error(`DELETE ${res.status}: ${txt}`);
-  }
-  return true;
-}
-
-/** ====== Conexão ====== */
-async function testarConexao() {
-  setStatus("load", "Conectando...");
-  setErro("");
-  try {
-    const data = await supaGet(`/rest/v1/mediums?select=id&limit=1`);
-    console.log("✅ Conectado Supabase", data);
-    setStatus("ok", "Conectado");
-    return true;
-  } catch (e) {
-    setStatus("err", "Erro");
-    setErro(String(e.message || e));
-    return false;
+async function supaDeleteChamadasByDate(iso) {
+  // DELETE /chamadas?data=eq.2025-12-02
+  const url = `${SUPABASE_URL}/rest/v1/${TB_CHAMADAS}?${COL_DATE}=eq.${encodeURIComponent(iso)}`;
+  const r = await fetch(url, {
+    method: "DELETE",
+    headers: {
+      ...supaHeaders(),
+      "Prefer": "return=minimal",
+    },
+  });
+  const t = await r.text();
+  if (!r.ok) {
+    const j = safeJsonParse(t);
+    throw new Error(j?.message || t || `HTTP ${r.status}`);
   }
 }
 
-/** ====== Carregar dados ====== */
-async function carregarMediums() {
-  // group_type esperado: "dirigente", "incorporacao", "desenvolvimento", "carencia"
-  // (pode ser maiúsculo/minúsculo — vou normalizar)
-  const list = await supaGet(`/rest/v1/mediums?select=id,name,group_type&order=name.asc`);
-  mediums = Array.isArray(list) ? list : [];
-  console.log("📋 mediums:", mediums);
+async function supaInsertChamadas(rows) {
+  const url = `${SUPABASE_URL}/rest/v1/${TB_CHAMADAS}`;
+  const r = await fetch(url, {
+    method: "POST",
+    headers: {
+      ...supaHeaders(),
+      "Prefer": "return=minimal",
+    },
+    body: JSON.stringify(rows),
+  });
+  const t = await r.text();
+  if (!r.ok) {
+    const j = safeJsonParse(t);
+    throw new Error(j?.message || t || `HTTP ${r.status}`);
+  }
 }
 
-async function carregarMarcacoesDaData(iso) {
-  marcacoes.clear();
-
-  // busca marcações já salvas
-  // ⚠️ aqui assume tabela public.chamadas com colunas: data, medium_id, status
-  const q = `/rest/v1/chamadas?select=medium_id,status&data=eq.${encodeURIComponent(iso)}`;
-  const rows = await supaGet(q);
-
-  (rows || []).forEach(r => {
-    if (r.medium_id && r.status) marcacoes.set(r.medium_id, r.status);
-  });
-
-  console.log("📝 marcações carregadas", iso, Object.fromEntries(marcacoes));
+/** ===== Grupos ===== */
+function normGroup(g) {
+  return (g || "").toLowerCase().trim();
 }
 
-/** ====== Render ====== */
-function calcularPercentual(registros) {
-  let p = 0, m = 0, f = 0, ps = 0;
-
-  registros.forEach(r => {
-    if (r.status === "P") p++;
-    if (r.status === "M") m++;
-    if (r.status === "F") f++;
-    if (r.status === "PS") ps++;
-  });
-
-  const total = p + m + f;
-  if (total === 0) return "—";
-
-  const presenca = p + m + ps;
-  return Math.round((presenca / total) * 100) + "%";
+function groupKeyFromDB(group_type) {
+  const k = normGroup(group_type);
+  if (k.includes("dir")) return "dirigentes";
+  if (k.includes("inc")) return "incorporacao";
+  if (k.includes("sus")) return "sustentacao";
+  if (k.includes("des")) return "desenvolvimento";
+  if (k.includes("car")) return "carencia";
+  return "desenvolvimento";
 }
 
-function criarLinhaMedium(m) {
-  const wrap = document.createElement("div");
-  wrap.className = "linha-medium";
-
-  const nome = document.createElement("div");
-  nome.className = "nome-medium";
-  nome.textContent = m.name || "(sem nome)";
-
-  const opcoes = document.createElement("div");
-  opcoes.className = "opcoes-medium";
-
-  const statusAtual = marcacoes.get(m.id) || "";
-
-  // cria radios P/M/F/PS (SEM rádio extra)
-  const itens = ["P", "M", "F", "PS"];
-
-  itens.forEach((v) => {
-    const lab = document.createElement("label");
-    lab.className = "opcao";
-
-    const inp = document.createElement("input");
-    inp.type = "radio";
-    inp.name = `st_${m.id}`;   // grupo por médium
-    inp.value = v;
-
-    if (v === statusAtual) inp.checked = true;
-
-    inp.addEventListener("change", () => {
-      marcacoes.set(m.id, v);
-      console.log("✅ marcou", m.name, m.id, v);
-      setTopo("Alterações pendentes. Clique em “Salvar chamada”.");
-    });
-
-    const txt = document.createElement("span");
-    txt.textContent = v;
-
-    lab.appendChild(inp);
-    lab.appendChild(txt);
-    opcoes.appendChild(lab);
-  });
-
-  // botão limpar (pra remover marcação)
-  const btnLimpar = document.createElement("button");
-  btnLimpar.type = "button";
-  btnLimpar.className = "btn-limpar";
-  btnLimpar.textContent = "Limpar";
-
-  btnLimpar.addEventListener("click", () => {
-    marcacoes.delete(m.id);
-    // desmarca radios no DOM
-    const radios = wrap.querySelectorAll(`input[name="st_${m.id}"]`);
-    radios.forEach(r => (r.checked = false));
-    console.log("🧹 limpou", m.name, m.id);
-    setTopo("Alterações pendentes. Clique em “Salvar chamada”.");
-  });
-
-  opcoes.appendChild(btnLimpar);
-
-  wrap.appendChild(nome);
-  wrap.appendChild(opcoes);
-
-  return wrap;
+function allowedOptionsForGroup(groupKey) {
+  // PS só em Dirigentes; Carência só P/F
+  if (groupKey === "dirigentes") return ["P", "M", "F", "PS"];
+  if (groupKey === "carencia") return ["P", "F"];
+  return ["P", "M", "F"];
 }
 
-function renderizarTudo() {
+/** ===== Percentuais ===== */
+function calcResumo(statusList) {
+  let P = 0, M = 0, F = 0, PS = 0;
+  for (const s of statusList) {
+    if (s === "P") P++;
+    else if (s === "M") M++;
+    else if (s === "F") F++;
+    else if (s === "PS") PS++;
+  }
+  const totalPMF = P + M + F;
+  const presenca = P + M;
+  const percPres = totalPMF ? Math.round((presenca / totalPMF) * 100) : 0;
+  const percFalta = totalPMF ? Math.round((F / totalPMF) * 100) : 0;
+  return { P, M, F, PS, totalPMF, presenca, percPres, percFalta };
+}
+
+function resumoText(r) {
+  const base = `P:${r.P}  M:${r.M}  F:${r.F}`;
+  const ps = r.PS ? `  PS:${r.PS}` : "";
+  const perc = r.totalPMF ? `  | Presença: ${r.percPres}%  | Faltas: ${r.percFalta}%` : `  | —`;
+  return base + ps + perc;
+}
+
+/** ===== Render ===== */
+function clearLists() {
   listaDirigentes.innerHTML = "";
   listaIncorporacao.innerHTML = "";
+  listaSustentacao.innerHTML = "";
   listaDesenvolvimento.innerHTML = "";
   listaCarencia.innerHTML = "";
-
-  const norm = (x) => String(x || "").trim().toLowerCase();
-
-  mediums.forEach(m => {
-    const gt = norm(m.group_type);
-
-    const linha = criarLinhaMedium(m);
-linha.classList.remove("psicografia","incorporacao","sustentacao");
-
-if (status === "PS") linha.classList.add("psicografia");
-if (status === "M") linha.classList.add("incorporacao");
-if (status === "P") linha.classList.add("sustentacao");
-
-
-    if (gt === "dirigente") listaDirigentes.appendChild(linha);
-    else if (gt === "incorporacao") listaIncorporacao.appendChild(linha);
-    else if (gt === "desenvolvimento") listaDesenvolvimento.appendChild(linha);
-    else if (gt === "carencia") listaCarencia.appendChild(linha);
-    else {
-      // se vier diferente, joga em desenvolvimento por padrão pra não sumir
-      listaDesenvolvimento.appendChild(linha);
-    }
-  });
 }
 
-/** ====== Regras da data (básico) ====== */
-async function verificarDataEPreparar() {
-  setErro("");
-  setTopo("");
+function renderAll() {
+  clearLists();
 
-  // tenta ler do input (date ou texto)
-  let iso = null;
+  const groups = {
+    dirigentes: [],
+    incorporacao: [],
+    sustentacao: [],
+    desenvolvimento: [],
+    carencia: [],
+  };
 
-  // se for <input type="date">: value vem YYYY-MM-DD
-  if (elData && /^\d{4}-\d{2}-\d{2}$/.test(elData.value || "")) {
-    iso = elData.value;
-  } else if (elData && /^\d{2}\/\d{2}\/\d{4}$/.test(elData.value || "")) {
-    iso = ddmmyyyyToISO(elData.value);
+  for (const m of mediums) {
+    const key = groupKeyFromDB(m.group_type);
+    groups[key].push(m);
   }
 
-  if (!iso) {
-    setErro("Data inválida. Use dd/mm/aaaa ou selecione no calendário.");
-    return false;
+  renderGroup("dirigentes", groups.dirigentes, listaDirigentes, resumoDirigentes);
+  renderGroup("incorporacao", groups.incorporacao, listaIncorporacao, resumoIncorporacao);
+  renderGroup("sustentacao", groups.sustentacao, listaSustentacao, resumoSustentacao);
+  renderGroup("desenvolvimento", groups.desenvolvimento, listaDesenvolvimento, resumoDesenvolvimento);
+  renderGroup("carencia", groups.carencia, listaCarencia, resumoCarencia);
+
+  renderResumoGeral(groups);
+}
+
+function renderGroup(groupKey, arr, container, resumoEl) {
+  arr.sort((a, b) => (a.name || "").localeCompare((b.name || ""), "pt-BR"));
+
+  const opts = allowedOptionsForGroup(groupKey);
+
+  const statusList = arr.map(m => statusPorMedium.get(m.id) || "").filter(Boolean);
+  const r = calcResumo(statusList);
+  resumoEl.textContent = `(${arr.length} nomes) ` + resumoText(r);
+
+  for (const m of arr) {
+    const current = (statusPorMedium.get(m.id) || "").toUpperCase();
+
+    const item = document.createElement("div");
+    item.className = "item";
+
+    // PS vermelho apenas Dirigentes
+    if (groupKey === "dirigentes" && current === "PS") {
+      item.classList.add("psicografia");
+    }
+
+    const left = document.createElement("div");
+    left.className = "left";
+    left.textContent = m.name || "(sem nome)";
+
+    const right = document.createElement("div");
+    right.className = "right";
+
+    const radios = document.createElement("div");
+    radios.className = "radios";
+
+    const rname = `m_${m.id}`;
+    for (const o of opts) {
+      const label = document.createElement("label");
+      label.className = "radioOpt";
+
+      const input = document.createElement("input");
+      input.type = "radio";
+      input.name = rname;
+      input.value = o;
+      input.checked = (current === o);
+
+      input.addEventListener("change", () => {
+        statusPorMedium.set(m.id, o);
+        renderAll();
+      });
+
+      label.appendChild(input);
+      label.appendChild(document.createTextNode(" " + o));
+      radios.appendChild(label);
+    }
+
+    const btnLimpar = document.createElement("button");
+    btnLimpar.className = "btnSmall";
+    btnLimpar.textContent = "Limpar";
+    btnLimpar.addEventListener("click", () => {
+      statusPorMedium.set(m.id, "");
+      renderAll();
+    });
+
+    right.appendChild(radios);
+    right.appendChild(btnLimpar);
+
+    item.appendChild(left);
+    item.appendChild(right);
+    container.appendChild(item);
   }
+}
 
-  dataAtivaISO = iso;
-  console.log("📅 data ativa:", dataAtivaISO);
+function renderResumoGeral(groups) {
+  const all = [
+    ...groups.dirigentes,
+    ...groups.incorporacao,
+    ...groups.sustentacao,
+    ...groups.desenvolvimento,
+    ...groups.carencia,
+  ];
 
-  // carrega marcações da data e renderiza
-  await carregarMarcacoesDaData(dataAtivaISO);
-  renderizarTudo();
+  const statusList = all.map(m => statusPorMedium.get(m.id) || "").filter(Boolean);
+  const r = calcResumo(statusList);
+  elResumoGeral.textContent = resumoText(r);
 
-  setTopo("Data válida.");
+  const mesaNames = [];
+  for (const m of all) {
+    if ((statusPorMedium.get(m.id) || "").toUpperCase() === "M") {
+      mesaNames.push(m.name);
+    }
+  }
+  mesaNames.sort((a, b) => (a || "").localeCompare((b || ""), "pt-BR"));
+  elReservasMesa.textContent = mesaNames.length ? mesaNames.join(", ") : "—";
+}
+
+/** ===== Data / feriados ===== */
+async function verificarData() {
+  const iso = isoFromInputDate(elData.value);
+  setMsg("", "");
+
+  if (!iso) { setMsg("", "Escolha uma data."); return false; }
+  if (!isTuesday(iso)) { setMsg("", "A reunião é na terça-feira. Escolha uma terça."); return false; }
+  if (feriadosSet.has(iso)) { setMsg("", "Essa data é feriado. Não pode haver reunião."); return false; }
+
+  setMsg("Data válida.", "");
   return true;
 }
 
-/** ====== Salvar ====== */
-async function salvarChamada() {
-  setErro("");
-  if (!dataAtivaISO) {
-    setErro("Primeiro clique em “Verificar data”.");
+/** ===== Load ===== */
+async function loadFeriados() {
+  const rows = await supaGet(`${TB_FERIADOS}?select=${COL_DATE}`);
+  feriadosSet = new Set(rows.map(r => r[COL_DATE]).filter(Boolean));
+}
+
+async function loadMediums() {
+  const rows = await supaGet(`${TB_MEDIUMS}?select=id,name,group_type&order=name.asc`);
+  mediums = rows || [];
+}
+
+async function loadChamadasByDate(iso) {
+  // /chamadas?select=medium_id,status&data=eq.2025-12-02
+  const rows = await supaGet(
+    `${TB_CHAMADAS}?select=${COL_MEDIUMID},${COL_STATUS}&${COL_DATE}=eq.${encodeURIComponent(iso)}`
+  );
+
+  statusPorMedium = new Map();
+  for (const r of rows) {
+    const mid = r[COL_MEDIUMID];
+    const st = (r[COL_STATUS] || "").toUpperCase();
+    if (mid) statusPorMedium.set(mid, st);
+  }
+
+  // segurança: PS não pode aparecer fora de Dirigentes
+  for (const m of mediums) {
+    const g = groupKeyFromDB(m.group_type);
+    const st = statusPorMedium.get(m.id);
+    if (st === "PS" && g !== "dirigentes") statusPorMedium.set(m.id, "");
+  }
+}
+
+/** ===== Save ===== */
+async function salvar() {
+  setMsg("", "");
+
+  const iso = isoFromInputDate(elData.value);
+  if (!iso) { setMsg("", "Escolha uma data."); return; }
+
+  const ok = await verificarData();
+  if (!ok) return;
+
+  // monta INSERT
+  const rows = [];
+  for (const m of mediums) {
+    const g = groupKeyFromDB(m.group_type);
+    const allowed = allowedOptionsForGroup(g);
+    let st = (statusPorMedium.get(m.id) || "").toUpperCase();
+
+    if (st && !allowed.includes(st)) st = "";
+    if (st) {
+      rows.push({
+        [COL_MEDIUMID]: m.id,
+        [COL_DATE]: iso,
+        [COL_STATUS]: st,
+      });
+    }
+  }
+
+  btnSalvar.disabled = true;
+  btnSalvar.textContent = "Salvando...";
+
+  try {
+    // estratégia imbatível: apaga a data e re-insere
+    await supaDeleteChamadasByDate(iso);
+    if (rows.length) await supaInsertChamadas(rows);
+
+    setMsg("Chamada salva com sucesso ✅", "");
+    await loadChamadasByDate(iso);
+    renderAll();
+  } catch (e) {
+    setMsg("", "Erro ao salvar: " + (e?.message || e));
+  } finally {
+    btnSalvar.disabled = false;
+    btnSalvar.textContent = "Salvar chamada";
+  }
+}
+
+/** ===== Conexão ===== */
+async function testConnection() {
+  await supaGet(`${TB_MEDIUMS}?select=id&limit=1`);
+}
+
+/** ===== Boot ===== */
+async function boot() {
+  setPill("warn", "● Conectando...", "Testando chave e endpoint...");
+
+  if (!SUPABASE_URL.includes("supabase.co") || SUPABASE_ANON_KEY.includes("COLE_SUA")) {
+    setPill("bad", "● Erro", "Cole SUPABASE_URL e SUPABASE_ANON_KEY no app.js");
     return;
   }
 
-  // monta payload (só quem tem marcação)
-  const payload = [];
-  for (const m of mediums) {
-    const st = marcacoes.get(m.id);
-    if (st) payload.push({ data: dataAtivaISO, medium_id: m.id, status: st });
-  }
-
   try {
-    setStatus("load", "Salvando...");
+    await testConnection();
+    setPill("ok", "● Conectado ✅", "Supabase OK");
 
-    // estratégia mais segura: apaga tudo da data e reinsere
-    await supaDelete(`/rest/v1/chamadas?data=eq.${encodeURIComponent(dataAtivaISO)}`);
+    await loadFeriados();
+    await loadMediums();
 
-    if (payload.length > 0) {
-      await supaPost(`/rest/v1/chamadas`, payload);
+    // tenta hoje (se terça e não feriado)
+    const hoje = new Date();
+    const isoHoje = new Date(Date.UTC(hoje.getFullYear(), hoje.getMonth(), hoje.getDate(), 12, 0, 0))
+      .toISOString()
+      .slice(0, 10);
+
+    if (isTuesday(isoHoje) && !feriadosSet.has(isoHoje)) {
+      elData.value = isoHoje;
+      dataAtual = isoHoje;
+      await loadChamadasByDate(isoHoje);
+    } else {
+      dataAtual = "";
+      statusPorMedium = new Map();
     }
 
-    setStatus("ok", "Conectado");
-    setTopo("Chamada salva com sucesso ✅");
-    console.log("💾 salva", dataAtivaISO, payload);
+    renderAll();
+    setMsg("Selecione a data e clique em “Verificar data”.", "");
+
   } catch (e) {
-    setStatus("err", "Erro");
-    setErro(String(e.message || e));
+    const msg = (e?.message || String(e));
+    setPill("bad", "● Erro", msg);
+    setMsg("", msg);
   }
 }
 
-/** ====== Boot ====== */
-async function boot() {
-  const ok = await testarConexao();
+/** ===== Eventos ===== */
+btnVerificar.addEventListener("click", async () => {
+  const ok = await verificarData();
   if (!ok) return;
 
-  await carregarMediums();
+  const iso = isoFromInputDate(elData.value);
+  if (!iso) return;
 
-  // render sem marcação (a data define)
-  renderizarTudo();
-
-  // se quiser, já seta hoje como padrão se o input estiver vazio
-  if (elData && !elData.value) {
-    // se for type="date"
-    elData.value = todayISO();
+  if (iso !== dataAtual) {
+    dataAtual = iso;
+    setMsg("Carregando marcações da data " + prettyBR(iso) + "...", "");
+    try {
+      await loadChamadasByDate(iso);
+      renderAll();
+      setMsg("Pronto.", "");
+    } catch (e) {
+      setMsg("", "Erro ao carregar marcações: " + (e?.message || e));
+    }
   }
-}
-
-document.addEventListener("DOMContentLoaded", () => {
-  boot();
-
-  if (btnVerificar) btnVerificar.addEventListener("click", verificarDataEPreparar);
-  if (btnSalvar) btnSalvar.addEventListener("click", salvarChamada);
 });
+
+btnSalvar.addEventListener("click", salvar);
+
+boot();
