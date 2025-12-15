@@ -1,100 +1,168 @@
 <!doctype html>
-<html lang="pt-br">
+<html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Chamada de Médiuns</title>
-  <link rel="stylesheet" href="./style.css" />
+  <link rel="stylesheet" href="style.css" />
 </head>
 
 <body>
-  <div class="page">
-    <header class="hero">
+  <header class="hero">
+    <div class="container">
       <h1>Chamada de Médiuns</h1>
       <p class="sub">Reunião: terça-feira 18:30 (exceto feriados)</p>
 
-      <div class="card topCard">
+      <!-- Tabs -->
+      <div class="tabs">
+        <button id="tabChamada" class="tabBtn active" type="button">Chamada</button>
+        <button id="tabParticipantes" class="tabBtn" type="button">Participantes</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <!-- ==================== ABA CHAMADA ==================== -->
+    <section id="viewChamada">
+      <div class="card">
         <div class="topRow">
-          <div class="pill" id="statusPill">● Conectando...</div>
-          <div class="statusText" id="statusText"></div>
+          <div class="status">
+            <span id="statusPill" class="pill">
+              <span class="dotLed"></span>
+              <span id="statusText">Conectando...</span>
+            </span>
+            <span class="muted">Supabase OK</span>
+          </div>
         </div>
 
-        <div class="formRow">
-          <div class="field">
-            <label for="dataChamada">Data da chamada</label>
-            <input id="dataChamada" type="date" />
+        <div class="grid2">
+          <div>
+            <label class="label">Data da chamada</label>
+            <input id="dataChamada" class="input" type="date" />
           </div>
-
-          <button id="btnVerificar" class="btn btnGhost" type="button">Verificar data</button>
-          <button id="btnSalvar" class="btn btnGreen" type="button">Salvar chamada</button>
+          <div class="actions">
+            <button id="btnVerificar" class="btn" type="button">Verificar data</button>
+            <button id="btnSalvar" class="btn primary" type="button">Salvar chamada</button>
+          </div>
         </div>
 
-        <div class="msg ok" id="msgTopo"></div>
-        <div class="msg err" id="msgErro"></div>
+        <div class="msgs">
+          <div id="msgTopo" class="msgOk"></div>
+          <div id="msgErro" class="msgErr"></div>
+        </div>
 
-        <div class="statsBar">
-          <div class="statBox">
-            <div class="statTitle">Resumo geral</div>
-            <div class="statValue" id="resumoGeral">—</div>
+        <div class="grid2">
+          <div class="miniCard">
+            <div class="miniTitle">Resumo geral</div>
+            <div id="resumoGeral" class="miniValue">P:0 M:0 F:0 PS:0 | Presença:0% | Faltas:0%</div>
           </div>
-          <div class="statBox">
-            <div class="statTitle">Reservas da mesa (M)</div>
-            <div class="statValue" id="reservasMesa">—</div>
+          <div class="miniCard">
+            <div class="miniTitle">Reservas da mesa (M)</div>
+            <div id="reservasMesa" class="miniValue">—</div>
           </div>
         </div>
       </div>
-    </header>
 
-    <main class="content">
+      <h2 class="sectionTitle">Dirigentes</h2>
+      <div id="listaDirigentes" class="list"></div>
 
-      <section class="sec">
-        <div class="secHead">
-          <h2>Dirigentes</h2>
-          <div class="secResumo" id="resumoDirigentes">—</div>
+      <h2 class="sectionTitle">Médiuns de Incorporação</h2>
+      <div id="listaIncorporacao" class="list"></div>
+
+      <h2 class="sectionTitle">Médiuns em Desenvolvimento</h2>
+      <div id="listaDesenvolvimento" class="list"></div>
+
+      <h2 class="sectionTitle">Médiuns em Carência</h2>
+      <div id="listaCarencia" class="list"></div>
+    </section>
+
+    <!-- ==================== ABA PARTICIPANTES ==================== -->
+    <section id="viewParticipantes" style="display:none;">
+      <div class="card">
+        <div class="topRow">
+          <div class="status">
+            <span class="pill ok">
+              <span class="dotLed"></span>
+              <span>Participantes</span>
+            </span>
+            <span class="muted">Adicionar / editar / excluir</span>
+          </div>
         </div>
-        <div class="list" id="listaDirigentes"></div>
-      </section>
 
-      <section class="sec">
-        <div class="secHead">
-          <h2>Médiuns de Incorporação</h2>
-          <div class="secResumo" id="resumoIncorporacao">—</div>
+        <div class="grid2">
+          <div>
+            <label class="label">Filtrar por grupo</label>
+            <select id="partFiltroGrupo" class="input">
+              <option value="">Todos</option>
+              <option value="dirigente">Dirigentes</option>
+              <option value="incorporacao">Incorporação</option>
+              <option value="desenvolvimento">Desenvolvimento</option>
+              <option value="carencia">Carência</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="label">Buscar por nome</label>
+            <input id="partBusca" class="input" placeholder="Digite parte do nome..." />
+          </div>
         </div>
-        <div class="list" id="listaIncorporacao"></div>
-      </section>
 
-      <section class="sec">
-        <div class="secHead">
-          <h2>Médiuns de Sustentação</h2>
-          <div class="secResumo" id="resumoSustentacao">—</div>
+        <div class="actionsRow">
+          <button id="btnRecarregarParticipantes" class="btn" type="button">Recarregar lista</button>
         </div>
-        <div class="list" id="listaSustentacao"></div>
-      </section>
 
-      <section class="sec">
-        <div class="secHead">
-          <h2>Médiuns em Desenvolvimento</h2>
-          <div class="secResumo" id="resumoDesenvolvimento">—</div>
+        <div class="divider"></div>
+
+        <h3 class="miniHeading">Novo participante</h3>
+
+        <div class="grid3">
+          <div>
+            <label class="label">Nome</label>
+            <input id="novoNome" class="input" placeholder="Ex: Adriana Ferreira" />
+          </div>
+
+          <div>
+            <label class="label">Grupo</label>
+            <select id="novoGrupo" class="input">
+              <option value="dirigente">Dirigente</option>
+              <option value="incorporacao">Incorporação</option>
+              <option value="desenvolvimento">Desenvolvimento</option>
+              <option value="carencia">Carência</option>
+            </select>
+          </div>
+
+          <div class="checks">
+            <label class="check">
+              <input id="novoAtivo" type="checkbox" checked />
+              <span>Ativo</span>
+            </label>
+
+            <label class="check">
+              <input id="novoMesa" type="checkbox" />
+              <span>Habilita Mesa (amarelo)</span>
+            </label>
+
+            <label class="check">
+              <input id="novoPsico" type="checkbox" />
+              <span>Habilita Psicografia (vermelho)</span>
+            </label>
+          </div>
         </div>
-        <div class="list" id="listaDesenvolvimento"></div>
-      </section>
 
-      <section class="sec">
-        <div class="secHead">
-          <h2>Médiuns em Carência</h2>
-          <div class="secResumo" id="resumoCarencia">—</div>
+        <div class="actionsRow">
+          <button id="btnAdicionarParticipante" class="btn primary" type="button">Adicionar participante</button>
+          <div id="partMsg" class="msgOk"></div>
+          <div id="partErr" class="msgErr"></div>
         </div>
-        <p class="hint">Carência não senta na mesa (somente P/F).</p>
-        <div class="list" id="listaCarencia"></div>
-      </section>
+      </div>
 
-    </main>
+      <h2 class="sectionTitle">Lista de participantes</h2>
+      <div id="listaParticipantes" class="list"></div>
+    </section>
 
-    <footer class="foot">
-      <small>© Chamada Núcleo</small>
-    </footer>
-  </div>
+  </main>
 
-  <script src="./app.js?v=5"></script>
+  <script src="app.js"></script>
 </body>
 </html>
