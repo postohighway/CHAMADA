@@ -287,4 +287,22 @@ input[type="date"]{
 .badgePsico { background: rgba(244, 67, 54, .16); color: #ff8a80; border-color: rgba(244,67,54,.25); }
 .itemRow.nextMesa { box-shadow: inset 0 0 0 1px rgba(255,193,7,.35); }
 .itemRow.nextPsico { box-shadow: inset 0 0 0 1px rgba(244,67,54,.35); }
+/* iPhone: dar “respiro” na lateral + respeitar safe-area */
+:root{
+  --page-pad: 14px;
+}
+
+body{
+  padding-left: calc(var(--page-pad) + env(safe-area-inset-left));
+  padding-right: calc(var(--page-pad) + env(safe-area-inset-right));
+}
+
+/* se você tiver um container principal (recomendado) */
+.container, .wrap, main{
+  padding-left: calc(var(--page-pad) + env(safe-area-inset-left));
+  padding-right: calc(var(--page-pad) + env(safe-area-inset-right));
+  box-sizing: border-box;
+}
+
+
 
