@@ -9,9 +9,8 @@
    ============================================================ */
 
 /** 🔑 COLE AQUI */
-const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co"; // ex: https://xxxx.supabase.co
+const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5vdXp6eXJldnlrZG1ucWlmamp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUzOTYzMDIsImV4cCI6MjA4MDk3MjMwMn0.s2OzeSXe7CrKDNl6fXkTcMj_Vgitod0l0h0BiJA79nc";
-
 
 /** ====== DOM ====== */
 const $ = (id) => document.getElementById(id);
@@ -53,10 +52,13 @@ const btnAdicionarParticipante = $("btnAdicionarParticipante");
 const partMsg = $("partMsg");
 const partErr = $("partErr");
 
+/** ====== Constantes ====== */
+const ALLOWED_STATUS = new Set(["P", "M", "F", "PS"]);
+
 /** ====== Estado ====== */
 let feriadosSet = new Set();
 let mediumsAll = [];         // todos (ativos/inativos)
-let chamadasMap = new Map(); // medium_id -> status
+let chamadasMap = new Map(); // medium_id -> status (P/M/F/PS)
 let rotacao = {
   mesa_dirigente: null,
   mesa_incorporacao: null,
@@ -138,10 +140,17 @@ async function sbDelete(table, whereQS){
   if(!r.ok){ throw new Error(`${r.status} ${r.statusText}: ${await r.text()}`); }
 }
 async function sbUpsertChamadas(rows){
+  // IMPORTANTÍSSIMO: só manda status válido (P/M/F/PS)
+  const clean = (rows || [])
+    .map(x => ({...x, status: (x.status||"").toUpperCase().trim()}))
+    .filter(x => ALLOWED_STATUS.has(x.status));
+
+  if(clean.length === 0) return;
+
   const r=await fetch(`${SUPABASE_URL}/rest/v1/chamadas?on_conflict=medium_id,data`,{
     method:"POST",
     headers:{...headersJson(), Prefer:"resolution=merge-duplicates,return=minimal"},
-    body: JSON.stringify(rows)
+    body: JSON.stringify(clean)
   });
   if(!r.ok){ throw new Error(`${r.status} ${r.statusText}: ${await r.text()}`); }
 }
@@ -161,12 +170,10 @@ async function loadBase(){
   const fer = await sbGet(`feriados?select=data`);
   feriadosSet = new Set(fer.map(x=>x.data));
 
-  // mediums completo (pra participantes + chamada)
   mediumsAll = await sbGet(
     `mediums?select=id,name,group_type,faltas,presencas,mesa,psicografia,carencia_total,carencia_atual,primeira_incorporacao,active&order=name.asc`
   );
 
-  // rotacao
   const rot = await sbGet(`rotacao?select=group_type,last_medium_id`);
   rotacao = {
     mesa_dirigente: null,
@@ -183,7 +190,11 @@ async function loadBase(){
 
 async function loadChamadasForDate(iso){
   const rows = await sbGet(`chamadas?select=medium_id,status&data=eq.${iso}`);
-  chamadasMap = new Map(rows.map(r=>[r.medium_id, (r.status||"").toUpperCase()]));
+  chamadasMap = new Map(
+    rows
+      .map(r=>[r.medium_id, (r.status||"").toUpperCase().trim()])
+      .filter(([_, st]) => ALLOWED_STATUS.has(st))
+  );
 }
 
 /** ====== Rotação: próximo com fallback (por fila) ====== */
@@ -223,7 +234,7 @@ function buildStatusOptions(m){
 }
 
 function makeRowChamada(m){
-  const current = chamadasMap.get(m.id) || "";
+  const current = (chamadasMap.get(m.id) || "").toUpperCase();
 
   const wrap=document.createElement("div");
   wrap.className="itemRow";
@@ -289,36 +300,32 @@ function makeRowChamada(m){
     inp.addEventListener("change", async ()=>{
       if(!currentDateISO){ setErro("Selecione a data e verifique."); return; }
 
-      // salva status
-      chamadasMap.set(m.id, s);
+      const status = (s||"").toUpperCase();
+      if(!ALLOWED_STATUS.has(status)){ setErro("Status inválido."); return; }
+
+      // atualiza local
+      chamadasMap.set(m.id, status);
       renderResumo();
 
       try{
-        await sbUpsertChamadas([{ medium_id:m.id, data: currentDateISO, status:s }]);
+        await sbUpsertChamadas([{ medium_id:m.id, data: currentDateISO, status }]);
 
-        // ✅ AVANÇA ROTAÇÃO AUTOMATICAMENTE (somente quando marcar mesa/psicografia)
-        // Dirigente: M = mesa_dirigente | PS = psicografia_dirigente
-        if(m.group_type==="dirigente" && s==="M"){
+        // AVANÇA ROTAÇÃO AUTOMATICAMENTE (somente quando marcar mesa/psicografia)
+        if(m.group_type==="dirigente" && status==="M"){
           await sbPatchRotacao("mesa_dirigente", m.id);
         }
-        if(m.group_type==="dirigente" && s==="PS"){
+        if(m.group_type==="dirigente" && status==="PS"){
           await sbPatchRotacao("psicografia_dirigente", m.id);
         }
-
-        // Incorporação: M = mesa_incorporacao
-        if(m.group_type==="incorporacao" && s==="M"){
+        if(m.group_type==="incorporacao" && status==="M"){
           await sbPatchRotacao("mesa_incorporacao", m.id);
         }
-
-        // Desenvolvimento: M = mesa_desenvolvimento
-        if(m.group_type==="desenvolvimento" && s==="M"){
+        if(m.group_type==="desenvolvimento" && status==="M"){
           await sbPatchRotacao("mesa_desenvolvimento", m.id);
         }
 
-        // Recalcula próximos e re-renderiza só para atualizar badges
         recomputeRotationBadges();
         renderChamada();
-
         setOk("Salvo.");
       }catch(e){
         setErro("Erro ao salvar: " + e.message);
@@ -333,9 +340,10 @@ function makeRowChamada(m){
   btn.className="btnSmall"; btn.textContent="Limpar";
   btn.addEventListener("click", async ()=>{
     if(!currentDateISO){ setErro("Selecione a data e verifique."); return; }
-    chamadasMap.set(m.id,"");
     try{
-      await sbUpsertChamadas([{ medium_id:m.id, data: currentDateISO, status:"" }]);
+      // ✅ NÃO grava vazio. Apaga a linha no banco.
+      await sbDelete("chamadas", `medium_id=eq.${m.id}&data=eq.${currentDateISO}`);
+      chamadasMap.delete(m.id);
       renderChamada();
       setOk("Limpo.");
     }catch(e){
@@ -424,7 +432,16 @@ async function onSalvarTudo(){
   if(!currentDateISO) return setErro("Selecione uma data e clique em Verificar data.");
   try{
     const activeOnly=mediumsAll.filter(m=>m.active===true);
-    const rows=activeOnly.map(m=>({ medium_id:m.id, data: currentDateISO, status:(chamadasMap.get(m.id)||"") }));
+
+    // ✅ só envia status válido
+    const rows = [];
+    for(const m of activeOnly){
+      const st = (chamadasMap.get(m.id)||"").toUpperCase().trim();
+      if(ALLOWED_STATUS.has(st)){
+        rows.push({ medium_id:m.id, data: currentDateISO, status: st });
+      }
+    }
+
     await sbUpsertChamadas(rows);
     setOk("Chamada salva.");
   }catch(e){
@@ -481,7 +498,7 @@ function makeRowParticipante(m){
       await sbDelete("mediums", `id=eq.${m.id}`);
       pOk("Excluído.");
       await reloadParticipants();
-      await loadBase(); // recarrega rotacoes
+      await loadBase();
       if(currentDateISO) await loadChamadasForDate(currentDateISO);
       renderChamada();
     }catch(e){ pErr("Erro ao excluir: "+e.message); }
@@ -608,7 +625,6 @@ async function onAdicionarParticipante(){
 
   if(!name) return pErr("Informe o nome.");
 
-  // ⚠️ IMPORTANTE: envia defaults pra não dar NULL em colunas NOT NULL
   const payload = {
     name,
     group_type,
@@ -683,4 +699,3 @@ function showTab(which){
   partBusca?.addEventListener("input", renderParticipants);
   btnAdicionarParticipante?.addEventListener("click", onAdicionarParticipante);
 })();
-
