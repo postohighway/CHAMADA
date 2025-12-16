@@ -51,6 +51,26 @@ body{
   background: rgba(0,0,0,.20);
   font-weight: 700;
 }
+
+/* ===== iPhone / Mobile padding + safe-area ===== */
+:root { --page-pad: 14px; }
+
+@media (max-width: 520px){
+  /* evita conteúdo colado e respeita a safe area */
+  #app, .app, .container, main, .page, .content {
+    padding-left: calc(var(--page-pad) + env(safe-area-inset-left));
+    padding-right: calc(var(--page-pad) + env(safe-area-inset-right));
+    box-sizing: border-box;
+  }
+
+  /* muitos layouts “quebram” a margem por usar 100vw */
+  #app, .app, .container, main, .page, .content,
+  .card, .panel, .section {
+    width: 100%;
+    max-width: 100%;
+  }
+}
+
 .pill.ok{ border-color: rgba(25,176,107,.45); }
 .pill.bad{ border-color: rgba(255,75,75,.45); }
 .pill.warn{ border-color: rgba(245,197,66,.45); }
@@ -305,6 +325,7 @@ body{
 }
 
 *{ box-sizing: border-box; }
+
 
 
 
