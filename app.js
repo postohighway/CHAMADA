@@ -1,6 +1,7 @@
 /* ============================================================
    CHAMADA DE MÉDIUNS - app.js (ROTAÇÃO 3 FILAS + PS SEPARADO)
    Tabelas: public.mediums, public.chamadas, public.feriados, public.rotacao
+   + HISTÓRICO: public.rotacao_historico
    Rotacoes:
      - mesa_dirigente (amarelo nos dirigentes)
      - mesa_incorporacao (amarelo em incorporação)
@@ -52,19 +53,21 @@ const btnAdicionarParticipante = $("btnAdicionarParticipante");
 const partMsg = $("partMsg");
 const partErr = $("partErr");
 
-/** ====== Constantes ====== */
-const ALLOWED_STATUS = new Set(["P", "M", "F", "PS"]);
-
 /** ====== Estado ====== */
 let feriadosSet = new Set();
-let mediumsAll = [];         // todos (ativos/inativos)
-let chamadasMap = new Map(); // medium_id -> status (P/M/F/PS)
+let mediumsAll = [];
+let chamadasMap = new Map();
+
+// rotação “global atual” (tabela rotacao)
 let rotacao = {
   mesa_dirigente: null,
   mesa_incorporacao: null,
   mesa_desenvolvimento: null,
   psicografia_dirigente: null
 };
+
+// rotação “da data selecionada” (se existir snapshot)
+let rotacaoView = null; // {mesa_dirigente, mesa_incorporacao, mesa_desenvolvimento, psicografia_dirigente} | null
 
 let nextMesaDirigenteId = null;
 let nextMesaIncorpId = null;
@@ -140,17 +143,10 @@ async function sbDelete(table, whereQS){
   if(!r.ok){ throw new Error(`${r.status} ${r.statusText}: ${await r.text()}`); }
 }
 async function sbUpsertChamadas(rows){
-  // IMPORTANTÍSSIMO: só manda status válido (P/M/F/PS)
-  const clean = (rows || [])
-    .map(x => ({...x, status: (x.status||"").toUpperCase().trim()}))
-    .filter(x => ALLOWED_STATUS.has(x.status));
-
-  if(clean.length === 0) return;
-
   const r=await fetch(`${SUPABASE_URL}/rest/v1/chamadas?on_conflict=medium_id,data`,{
     method:"POST",
     headers:{...headersJson(), Prefer:"resolution=merge-duplicates,return=minimal"},
-    body: JSON.stringify(clean)
+    body: JSON.stringify(rows)
   });
   if(!r.ok){ throw new Error(`${r.status} ${r.statusText}: ${await r.text()}`); }
 }
@@ -163,6 +159,41 @@ async function sbPatchRotacao(group_type, last_medium_id){
   });
   if(!r.ok){ throw new Error(`${r.status} ${r.statusText}: ${await r.text()}`); }
   rotacao[group_type] = last_medium_id; // mantém estado local coerente
+}
+
+/** ====== NOVO: Snapshot de rotação por data ====== */
+async function loadRotacaoSnapshotForDate(iso){
+  // retorna objeto { mesa_dirigente, ... } ou null
+  const rows = await sbGet(
+    `rotacao_historico?select=data,mesa_dirigente_last_id,mesa_incorporacao_last_id,mesa_desenvolvimento_last_id,psicografia_dirigente_last_id&data=eq.${iso}&limit=1`
+  );
+  if(!rows || rows.length===0) return null;
+  const r = rows[0];
+  return {
+    mesa_dirigente: r.mesa_dirigente_last_id || null,
+    mesa_incorporacao: r.mesa_incorporacao_last_id || null,
+    mesa_desenvolvimento: r.mesa_desenvolvimento_last_id || null,
+    psicografia_dirigente: r.psicografia_dirigente_last_id || null
+  };
+}
+
+async function upsertRotacaoSnapshotForDate(iso){
+  // grava o snapshot “como está agora” (rotacao global) para aquela data
+  const payload = [{
+    data: iso,
+    mesa_dirigente_last_id: rotacao.mesa_dirigente,
+    mesa_incorporacao_last_id: rotacao.mesa_incorporacao,
+    mesa_desenvolvimento_last_id: rotacao.mesa_desenvolvimento,
+    psicografia_dirigente_last_id: rotacao.psicografia_dirigente,
+    updated_at: new Date().toISOString()
+  }];
+
+  const r=await fetch(`${SUPABASE_URL}/rest/v1/rotacao_historico?on_conflict=data`,{
+    method:"POST",
+    headers:{...headersJson(), Prefer:"resolution=merge-duplicates,return=minimal"},
+    body: JSON.stringify(payload)
+  });
+  if(!r.ok){ throw new Error(`${r.status} ${r.statusText}: ${await r.text()}`); }
 }
 
 /** ====== Loads ====== */
@@ -190,11 +221,7 @@ async function loadBase(){
 
 async function loadChamadasForDate(iso){
   const rows = await sbGet(`chamadas?select=medium_id,status&data=eq.${iso}`);
-  chamadasMap = new Map(
-    rows
-      .map(r=>[r.medium_id, (r.status||"").toUpperCase().trim()])
-      .filter(([_, st]) => ALLOWED_STATUS.has(st))
-  );
+  chamadasMap = new Map(rows.map(r=>[r.medium_id, (r.status||"").toUpperCase()]));
 }
 
 /** ====== Rotação: próximo com fallback (por fila) ====== */
@@ -214,16 +241,19 @@ function computeNext(list, lastId){
   if(idx===-1) return list[0].id;
   return list[(idx+1)%list.length].id;
 }
+
 function recomputeRotationBadges(){
+  const base = rotacaoView || rotacao; // <- se tiver snapshot da data, usa ele; senão, usa rotação atual
+
   const dir = eligibleByGroup("dirigente");
   const inc = eligibleByGroup("incorporacao");
   const des = eligibleByGroup("desenvolvimento");
   const ps  = eligibleDirigentePsico();
 
-  nextMesaDirigenteId = computeNext(dir, rotacao.mesa_dirigente);
-  nextMesaIncorpId    = computeNext(inc, rotacao.mesa_incorporacao);
-  nextMesaDesenvId    = computeNext(des, rotacao.mesa_desenvolvimento);
-  nextPsicoDirigenteId= computeNext(ps,  rotacao.psicografia_dirigente);
+  nextMesaDirigenteId = computeNext(dir, base.mesa_dirigente);
+  nextMesaIncorpId    = computeNext(inc, base.mesa_incorporacao);
+  nextMesaDesenvId    = computeNext(des, base.mesa_desenvolvimento);
+  nextPsicoDirigenteId= computeNext(ps,  base.psicografia_dirigente);
 }
 
 /** ====== Render CHAMADA ====== */
@@ -234,7 +264,7 @@ function buildStatusOptions(m){
 }
 
 function makeRowChamada(m){
-  const current = (chamadasMap.get(m.id) || "").toUpperCase();
+  const current = chamadasMap.get(m.id) || "";
 
   const wrap=document.createElement("div");
   wrap.className="itemRow";
@@ -300,32 +330,33 @@ function makeRowChamada(m){
     inp.addEventListener("change", async ()=>{
       if(!currentDateISO){ setErro("Selecione a data e verifique."); return; }
 
-      const status = (s||"").toUpperCase();
-      if(!ALLOWED_STATUS.has(status)){ setErro("Status inválido."); return; }
-
-      // atualiza local
-      chamadasMap.set(m.id, status);
+      chamadasMap.set(m.id, s);
       renderResumo();
 
       try{
-        await sbUpsertChamadas([{ medium_id:m.id, data: currentDateISO, status }]);
+        await sbUpsertChamadas([{ medium_id:m.id, data: currentDateISO, status:s }]);
 
-        // AVANÇA ROTAÇÃO AUTOMATICAMENTE (somente quando marcar mesa/psicografia)
-        if(m.group_type==="dirigente" && status==="M"){
+        // AVANÇA ROTAÇÃO AUTOMATICAMENTE
+        if(m.group_type==="dirigente" && s==="M"){
           await sbPatchRotacao("mesa_dirigente", m.id);
         }
-        if(m.group_type==="dirigente" && status==="PS"){
+        if(m.group_type==="dirigente" && s==="PS"){
           await sbPatchRotacao("psicografia_dirigente", m.id);
         }
-        if(m.group_type==="incorporacao" && status==="M"){
+        if(m.group_type==="incorporacao" && s==="M"){
           await sbPatchRotacao("mesa_incorporacao", m.id);
         }
-        if(m.group_type==="desenvolvimento" && status==="M"){
+        if(m.group_type==="desenvolvimento" && s==="M"){
           await sbPatchRotacao("mesa_desenvolvimento", m.id);
         }
 
+        // Atualiza snapshot daquela data (opcional, mas ajuda muito)
+        await upsertRotacaoSnapshotForDate(currentDateISO);
+        rotacaoView = await loadRotacaoSnapshotForDate(currentDateISO); // garante “fidelidade” ao abrir/atualizar
+
         recomputeRotationBadges();
         renderChamada();
+
         setOk("Salvo.");
       }catch(e){
         setErro("Erro ao salvar: " + e.message);
@@ -340,10 +371,9 @@ function makeRowChamada(m){
   btn.className="btnSmall"; btn.textContent="Limpar";
   btn.addEventListener("click", async ()=>{
     if(!currentDateISO){ setErro("Selecione a data e verifique."); return; }
+    chamadasMap.set(m.id,"");
     try{
-      // ✅ NÃO grava vazio. Apaga a linha no banco.
-      await sbDelete("chamadas", `medium_id=eq.${m.id}&data=eq.${currentDateISO}`);
-      chamadasMap.delete(m.id);
+      await sbUpsertChamadas([{ medium_id:m.id, data: currentDateISO, status:"" }]);
       renderChamada();
       setOk("Limpo.");
     }catch(e){
@@ -422,7 +452,15 @@ async function onVerificar(){
   if(feriadosSet.has(iso)) return setErro("Essa data está marcada como feriado.");
 
   currentDateISO=iso;
-  setOk(`Data válida: ${formatISOtoBR(iso)}`);
+
+  // carrega snapshot daquela data (se existir)
+  rotacaoView = await loadRotacaoSnapshotForDate(iso);
+
+  if(rotacaoView){
+    setOk(`Data válida: ${formatISOtoBR(iso)} • (modo histórico fiel)`);
+  }else{
+    setOk(`Data válida: ${formatISOtoBR(iso)} • (sem snapshot — usando rotação atual)`);
+  }
 
   await loadChamadasForDate(iso);
   renderChamada();
@@ -432,18 +470,14 @@ async function onSalvarTudo(){
   if(!currentDateISO) return setErro("Selecione uma data e clique em Verificar data.");
   try{
     const activeOnly=mediumsAll.filter(m=>m.active===true);
-
-    // ✅ só envia status válido
-    const rows = [];
-    for(const m of activeOnly){
-      const st = (chamadasMap.get(m.id)||"").toUpperCase().trim();
-      if(ALLOWED_STATUS.has(st)){
-        rows.push({ medium_id:m.id, data: currentDateISO, status: st });
-      }
-    }
-
+    const rows=activeOnly.map(m=>({ medium_id:m.id, data: currentDateISO, status:(chamadasMap.get(m.id)||"") }));
     await sbUpsertChamadas(rows);
-    setOk("Chamada salva.");
+
+    // grava snapshot fiel da rotação daquele dia
+    await upsertRotacaoSnapshotForDate(currentDateISO);
+    rotacaoView = await loadRotacaoSnapshotForDate(currentDateISO);
+
+    setOk("Chamada salva (e snapshot gravado).");
   }catch(e){
     setErro("Erro ao salvar chamada: " + e.message);
   }
@@ -699,3 +733,4 @@ function showTab(which){
   partBusca?.addEventListener("input", renderParticipants);
   btnAdicionarParticipante?.addEventListener("click", onAdicionarParticipante);
 })();
+
