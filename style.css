@@ -329,3 +329,21 @@ body{
 
 
 
+
+
+/* ====== Próximos (cabeçalho) ====== */
+.sepLine{
+  height: 1px;
+  background: var(--line);
+  margin: 12px 0;
+  opacity: .8;
+}
+.miniTitle{
+  font-weight: 800;
+  letter-spacing: .2px;
+  margin-bottom: 8px;
+}
+.miniText{
+  line-height: 1.35;
+}
+.miniText div{ margin: 4px 0; }

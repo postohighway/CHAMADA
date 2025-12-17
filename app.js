@@ -40,6 +40,11 @@ const listaCarencia = $("listaCarencia");
 const elResumoGeral = $("resumoGeral");
 const elReservasMesa = $("reservasMesa");
 
+const elNextMesaDirigenteName = $("nextMesaDirigenteName");
+const elNextPsicoDirigenteName = $("nextPsicoDirigenteName");
+const elNextMesaIncorpName = $("nextMesaIncorpName");
+const elNextMesaDesenvName = $("nextMesaDesenvName");
+
 /** ====== PARTICIPANTES UI ====== */
 const partFiltroGrupo = $("partFiltroGrupo");
 const partBusca = $("partBusca");
@@ -224,6 +229,9 @@ async function loadBase(){
       rotacao[r.group_type] = r.last_medium_id || null;
     }
   }
+
+
+  renderProximosHeader();
 }
 async function loadChamadasForDate(iso){
   const rows = await sbGet(`chamadas?select=medium_id,status&data=eq.${iso}`);
@@ -240,6 +248,33 @@ function eligibleDirigentePsico(){
   return mediumsAll
     .filter(m=>m.active===true && m.group_type==="dirigente" && Number(m.psicografia)===1)
     .sort((a,b)=>(a.name||"").localeCompare(b.name||"","pt-BR"));
+}
+
+
+function findNameById(id){
+  if(!id) return "—";
+  const m = mediumsAll.find(x=>x.id===id);
+  return m?.name || "—";
+}
+
+/** ====== Próximos (para a próxima reunião, baseado na rotação atual) ====== */
+function renderProximosHeader(){
+  if(!elNextMesaDirigenteName && !elNextPsicoDirigenteName && !elNextMesaIncorpName && !elNextMesaDesenvName) return;
+
+  const dir = eligibleByGroup("dirigente");
+  const inc = eligibleByGroup("incorporacao");
+  const des = eligibleByGroup("desenvolvimento");
+  const ps  = eligibleDirigentePsico();
+
+  const nextDirMesaId = computeNext(dir, rotacao.mesa_dirigente);
+  const nextIncMesaId = computeNext(inc, rotacao.mesa_incorporacao);
+  const nextDesMesaId = computeNext(des, rotacao.mesa_desenvolvimento);
+  const nextPsicoId   = computeNext(ps,  rotacao.psicografia_dirigente);
+
+  if(elNextMesaDirigenteName) elNextMesaDirigenteName.textContent = findNameById(nextDirMesaId);
+  if(elNextMesaIncorpName) elNextMesaIncorpName.textContent = findNameById(nextIncMesaId);
+  if(elNextMesaDesenvName) elNextMesaDesenvName.textContent = findNameById(nextDesMesaId);
+  if(elNextPsicoDirigenteName) elNextPsicoDirigenteName.textContent = findNameById(nextPsicoId);
 }
 function computeNext(list, lastId){
   if(list.length===0) return null;
@@ -595,6 +630,7 @@ async function reloadParticipants(){
     `mediums?select=id,name,group_type,faltas,presencas,mesa,psicografia,carencia_total,carencia_atual,primeira_incorporacao,active&order=name.asc`
   );
   renderParticipants();
+    renderProximosHeader();
 }
 function openEditor(m){
   const modal=document.createElement("div");
