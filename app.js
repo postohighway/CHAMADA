@@ -177,36 +177,40 @@ async function sbPatchRotacao(group_type, last_medium_id){
 }
 
 /** ====== Snapshot de rotação por data ====== */
-async function loadRotacaoSnapshotForDate(iso){
-  const rows = await sbGet(
-    `rotacao_historico?select=data,mesa_dirigente_last_id,mesa_incorporacao_last_id,mesa_desenvolvimento_last_id,psicografia_dirigente_last_id&data=eq.${iso}&limit=1`
-  );
-  if(!rows || rows.length===0) return null;
-  const r = rows[0];
-  return {
-    mesa_dirigente: r.mesa_dirigente_last_id || null,
-    mesa_incorporacao: r.mesa_incorporacao_last_id || null,
-    mesa_desenvolvimento: r.mesa_desenvolvimento_last_id || null,
-    psicografia_dirigente: r.psicografia_dirigente_last_id || null
-  };
-}
-async function upsertRotacaoSnapshotForDate(iso){
-  const payload = [{
-    data: iso,
-    mesa_dirigente_last_id: rotacao.mesa_dirigente,
-    mesa_incorporacao_last_id: rotacao.mesa_incorporacao,
-    mesa_desenvolvimento_last_id: rotacao.mesa_desenvolvimento,
-    psicografia_dirigente_last_id: rotacao.psicografia_dirigente,
-    updated_at: new Date().toISOString()
-  }];
+async function onSalvarTudo(){
+  if(!currentDateISO){
+    setErro("Selecione uma data e clique em Verificar data.");
+    return;
+  }
 
-  const r=await fetch(`${SUPABASE_URL}/rest/v1/rotacao_historico?on_conflict=data`,{
-    method:"POST",
-    headers:{...headersJson(), Prefer:"resolution=merge-duplicates,return=minimal"},
-    body: JSON.stringify(payload)
-  });
-  if(!r.ok){ throw new Error(`${r.status} ${r.statusText}: ${await r.text()}`); }
+  try{
+    const rows = [];
+
+    for(const m of mediumsAll.filter(x => x.active)){
+      const st = (chamadasMap.get(m.id) || "").toUpperCase();
+      if(st === "P" || st === "M" || st === "F" || st === "PS"){
+        rows.push({
+          medium_id: m.id,
+          data: currentDateISO,
+          status: st
+        });
+      }
+    }
+
+    if(rows.length > 0){
+      await sbUpsertChamadas(rows);
+    }
+
+    // snapshot da rotação
+    await upsertRotacaoSnapshotForDate(currentDateISO);
+    rotacaoView = await loadRotacaoSnapshotForDate(currentDateISO);
+
+    setOk("Chamada salva com sucesso.");
+  }catch(e){
+    setErro("Erro ao salvar chamada: " + e.message);
+  }
 }
+
 
 /** ====== Loads ====== */
 async function loadBase(){
