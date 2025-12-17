@@ -158,12 +158,11 @@ async function sbPatchRotacao(group_type, last_medium_id){
     body: JSON.stringify({ last_medium_id, updated_at: new Date().toISOString() })
   });
   if(!r.ok){ throw new Error(`${r.status} ${r.statusText}: ${await r.text()}`); }
-  rotacao[group_type] = last_medium_id; // mantém estado local coerente
+  rotacao[group_type] = last_medium_id;
 }
 
-/** ====== NOVO: Snapshot de rotação por data ====== */
+/** ====== Snapshot de rotação por data ====== */
 async function loadRotacaoSnapshotForDate(iso){
-  // retorna objeto { mesa_dirigente, ... } ou null
   const rows = await sbGet(
     `rotacao_historico?select=data,mesa_dirigente_last_id,mesa_incorporacao_last_id,mesa_desenvolvimento_last_id,psicografia_dirigente_last_id&data=eq.${iso}&limit=1`
   );
@@ -177,14 +176,16 @@ async function loadRotacaoSnapshotForDate(iso){
   };
 }
 
-async function upsertRotacaoSnapshotForDate(iso){
-  // grava o snapshot “como está agora” (rotacao global) para aquela data
+/** ✅ IMPORTANTE: snapshot pode receber “forced” (estado fiel) */
+async function upsertRotacaoSnapshotForDate(iso, forced = null){
+  const src = forced || rotacao;
+
   const payload = [{
     data: iso,
-    mesa_dirigente_last_id: rotacao.mesa_dirigente,
-    mesa_incorporacao_last_id: rotacao.mesa_incorporacao,
-    mesa_desenvolvimento_last_id: rotacao.mesa_desenvolvimento,
-    psicografia_dirigente_last_id: rotacao.psicografia_dirigente,
+    mesa_dirigente_last_id: src.mesa_dirigente || null,
+    mesa_incorporacao_last_id: src.mesa_incorporacao || null,
+    mesa_desenvolvimento_last_id: src.mesa_desenvolvimento || null,
+    psicografia_dirigente_last_id: src.psicografia_dirigente || null,
     updated_at: new Date().toISOString()
   }];
 
@@ -243,7 +244,7 @@ function computeNext(list, lastId){
 }
 
 function recomputeRotationBadges(){
-  const base = rotacaoView || rotacao; // <- se tiver snapshot da data, usa ele; senão, usa rotação atual
+  const base = rotacaoView || rotacao;
 
   const dir = eligibleByGroup("dirigente");
   const inc = eligibleByGroup("incorporacao");
@@ -269,7 +270,6 @@ function makeRowChamada(m){
   const wrap=document.createElement("div");
   wrap.className="itemRow";
 
-  // amarelo nos 3 grupos, vermelho só em dirigente
   if(m.group_type==="dirigente"){
     if(m.id===nextMesaDirigenteId) wrap.classList.add("nextMesa");
     if(m.id===nextPsicoDirigenteId) wrap.classList.add("nextPsico");
@@ -337,22 +337,19 @@ function makeRowChamada(m){
         await sbUpsertChamadas([{ medium_id:m.id, data: currentDateISO, status:s }]);
 
         // AVANÇA ROTAÇÃO AUTOMATICAMENTE
-        if(m.group_type==="dirigente" && s==="M"){
-          await sbPatchRotacao("mesa_dirigente", m.id);
-        }
-        if(m.group_type==="dirigente" && s==="PS"){
-          await sbPatchRotacao("psicografia_dirigente", m.id);
-        }
-        if(m.group_type==="incorporacao" && s==="M"){
-          await sbPatchRotacao("mesa_incorporacao", m.id);
-        }
-        if(m.group_type==="desenvolvimento" && s==="M"){
-          await sbPatchRotacao("mesa_desenvolvimento", m.id);
-        }
+        if(m.group_type==="dirigente" && s==="M")  await sbPatchRotacao("mesa_dirigente", m.id);
+        if(m.group_type==="dirigente" && s==="PS") await sbPatchRotacao("psicografia_dirigente", m.id);
+        if(m.group_type==="incorporacao" && s==="M") await sbPatchRotacao("mesa_incorporacao", m.id);
+        if(m.group_type==="desenvolvimento" && s==="M") await sbPatchRotacao("mesa_desenvolvimento", m.id);
 
-        // Atualiza snapshot daquela data (opcional, mas ajuda muito)
-        await upsertRotacaoSnapshotForDate(currentDateISO);
-        rotacaoView = await loadRotacaoSnapshotForDate(currentDateISO); // garante “fidelidade” ao abrir/atualizar
+        // snapshot fiel da data (com rotação já atualizada)
+        await upsertRotacaoSnapshotForDate(currentDateISO, {
+          mesa_dirigente: rotacao.mesa_dirigente,
+          mesa_incorporacao: rotacao.mesa_incorporacao,
+          mesa_desenvolvimento: rotacao.mesa_desenvolvimento,
+          psicografia_dirigente: rotacao.psicografia_dirigente
+        });
+        rotacaoView = await loadRotacaoSnapshotForDate(currentDateISO);
 
         recomputeRotationBadges();
         renderChamada();
@@ -453,7 +450,6 @@ async function onVerificar(){
 
   currentDateISO=iso;
 
-  // carrega snapshot daquela data (se existir)
   rotacaoView = await loadRotacaoSnapshotForDate(iso);
 
   if(rotacaoView){
@@ -466,18 +462,54 @@ async function onVerificar(){
   renderChamada();
 }
 
+/** ✅ CORREÇÃO PRINCIPAL: salvar chamada também atualiza rotação global corretamente */
 async function onSalvarTudo(){
   if(!currentDateISO) return setErro("Selecione uma data e clique em Verificar data.");
+
   try{
-    const activeOnly=mediumsAll.filter(m=>m.active===true);
-    const rows=activeOnly.map(m=>({ medium_id:m.id, data: currentDateISO, status:(chamadasMap.get(m.id)||"") }));
+    const activeOnly = mediumsAll.filter(m=>m.active===true);
+
+    // 1) salva todas as chamadas do dia
+    const rows = activeOnly.map(m=>({
+      medium_id: m.id,
+      data: currentDateISO,
+      status: (chamadasMap.get(m.id) || "").toUpperCase()
+    }));
     await sbUpsertChamadas(rows);
 
-    // grava snapshot fiel da rotação daquele dia
-    await upsertRotacaoSnapshotForDate(currentDateISO);
-    rotacaoView = await loadRotacaoSnapshotForDate(currentDateISO);
+    // 2) pega quem foi “M” e “PS” no dia para atualizar rotação global
+    const pick = (group_type, wantedStatus) => {
+      const found = activeOnly.find(m =>
+        m.group_type === group_type &&
+        (chamadasMap.get(m.id) || "").toUpperCase() === wantedStatus
+      );
+      return found ? found.id : null;
+    };
 
-    setOk("Chamada salva (e snapshot gravado).");
+    const lastMesaDir  = pick("dirigente", "M");
+    const lastMesaInc  = pick("incorporacao", "M");
+    const lastMesaDes  = pick("desenvolvimento", "M");
+    const lastPsicoDir = pick("dirigente", "PS");
+
+    if(lastMesaDir)  await sbPatchRotacao("mesa_dirigente", lastMesaDir);
+    if(lastMesaInc)  await sbPatchRotacao("mesa_incorporacao", lastMesaInc);
+    if(lastMesaDes)  await sbPatchRotacao("mesa_desenvolvimento", lastMesaDes);
+    if(lastPsicoDir) await sbPatchRotacao("psicografia_dirigente", lastPsicoDir);
+
+    // 3) grava snapshot fiel da data com a rotação já atualizada
+    await upsertRotacaoSnapshotForDate(currentDateISO, {
+      mesa_dirigente: rotacao.mesa_dirigente,
+      mesa_incorporacao: rotacao.mesa_incorporacao,
+      mesa_desenvolvimento: rotacao.mesa_desenvolvimento,
+      psicografia_dirigente: rotacao.psicografia_dirigente
+    });
+
+    // 4) atualiza view e re-renderiza
+    rotacaoView = await loadRotacaoSnapshotForDate(currentDateISO);
+    recomputeRotationBadges();
+    renderChamada();
+
+    setOk("Chamada salva (rotação atualizada e snapshot gravado).");
   }catch(e){
     setErro("Erro ao salvar chamada: " + e.message);
   }
@@ -733,4 +765,3 @@ function showTab(which){
   partBusca?.addEventListener("input", renderParticipants);
   btnAdicionarParticipante?.addEventListener("click", onAdicionarParticipante);
 })();
-
