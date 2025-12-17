@@ -11,12 +11,13 @@
 
 /** 🔑 COLE AQUI */
 const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5vdXp6eXJldnlrZG1ucWlmamp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUzOTYzMDIsImV4cCI6MjA4MDk3MjMwMn0.s2OzeSXe7CrKDNl6fXkTcMj_Vgitod0l0h0BiJA79nc";
+const SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5vdXp6eXJldnlrZG1ucWlmamp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUzOTYzMDIsImV4cCI6MjA4MDk3MjMwMn0.s2OzeSXe7CrKDNl6fXkTcMj_Vgitod0l0h0BiJA79nc";
 
 /** ====== DOM ====== */
 const $ = (id) => document.getElementById(id);
 
-/** ====== Tabs (se existirem no seu HTML atual) ====== */
+/** ====== Tabs ====== */
 const tabChamada = $("tabChamada");
 const tabParticipantes = $("tabParticipantes");
 const viewChamada = $("viewChamada");
@@ -39,7 +40,7 @@ const listaCarencia = $("listaCarencia");
 const elResumoGeral = $("resumoGeral");
 const elReservasMesa = $("reservasMesa");
 
-/** ====== PARTICIPANTES UI (se existir) ====== */
+/** ====== PARTICIPANTES UI ====== */
 const partFiltroGrupo = $("partFiltroGrupo");
 const partBusca = $("partBusca");
 const btnRecarregarParticipantes = $("btnRecarregarParticipantes");
@@ -66,8 +67,11 @@ let rotacao = {
   psicografia_dirigente: null
 };
 
-// rotação “da data selecionada” (se existir snapshot)
-let rotacaoView = null; // {mesa_dirigente, mesa_incorporacao, mesa_desenvolvimento, psicografia_dirigente} | null
+// rotação “da data selecionada” (snapshot se existir)
+let rotacaoView = null;
+
+// ✅ NOVO: rotação “base” do dia (para avançar corretamente ao salvar)
+let rotacaoStart = null;
 
 let nextMesaDirigenteId = null;
 let nextMesaIncorpId = null;
@@ -77,7 +81,10 @@ let nextPsicoDirigenteId = null;
 let currentDateISO = null;
 
 /** ====== UI utils ====== */
-function setOk(msg = "") { if (elMsgTopo) elMsgTopo.textContent = msg; if (elMsgErro) elMsgErro.textContent = ""; }
+function setOk(msg = "") {
+  if (elMsgTopo) elMsgTopo.textContent = msg;
+  if (elMsgErro) elMsgErro.textContent = "";
+}
 function setErro(msg = "") { if (elMsgErro) elMsgErro.textContent = msg; }
 function setConn(ok, msg) {
   if (!elStatusPill || !elStatusText) return;
@@ -103,6 +110,9 @@ function isTuesday(iso){
 function formatISOtoBR(iso){
   const [y,m,d]=iso.split("-");
   return `${d}/${m}/${y}`;
+}
+function deepCopy(obj){
+  return JSON.parse(JSON.stringify(obj));
 }
 
 /** ====== Supabase REST ====== */
@@ -175,17 +185,13 @@ async function loadRotacaoSnapshotForDate(iso){
     psicografia_dirigente: r.psicografia_dirigente_last_id || null
   };
 }
-
-/** ✅ IMPORTANTE: snapshot pode receber “forced” (estado fiel) */
-async function upsertRotacaoSnapshotForDate(iso, forced = null){
-  const src = forced || rotacao;
-
+async function upsertRotacaoSnapshotForDate(iso){
   const payload = [{
     data: iso,
-    mesa_dirigente_last_id: src.mesa_dirigente || null,
-    mesa_incorporacao_last_id: src.mesa_incorporacao || null,
-    mesa_desenvolvimento_last_id: src.mesa_desenvolvimento || null,
-    psicografia_dirigente_last_id: src.psicografia_dirigente || null,
+    mesa_dirigente_last_id: rotacao.mesa_dirigente,
+    mesa_incorporacao_last_id: rotacao.mesa_incorporacao,
+    mesa_desenvolvimento_last_id: rotacao.mesa_desenvolvimento,
+    psicografia_dirigente_last_id: rotacao.psicografia_dirigente,
     updated_at: new Date().toISOString()
   }];
 
@@ -219,13 +225,12 @@ async function loadBase(){
     }
   }
 }
-
 async function loadChamadasForDate(iso){
   const rows = await sbGet(`chamadas?select=medium_id,status&data=eq.${iso}`);
   chamadasMap = new Map(rows.map(r=>[r.medium_id, (r.status||"").toUpperCase()]));
 }
 
-/** ====== Rotação: próximo com fallback (por fila) ====== */
+/** ====== Rotação helpers ====== */
 function eligibleByGroup(group_type){
   return mediumsAll
     .filter(m=>m.active===true && m.group_type===group_type)
@@ -241,6 +246,18 @@ function computeNext(list, lastId){
   const idx=list.findIndex(x=>x.id===lastId);
   if(idx===-1) return list[0].id;
   return list[(idx+1)%list.length].id;
+}
+
+// ✅ Avança N posições na fila e retorna o NOVO lastId (o último que “sentou”)
+function advanceLastId(list, lastId, steps){
+  if(!steps || steps<=0) return lastId || null;
+  if(!list || list.length===0) return lastId || null;
+
+  let cur = lastId || null;
+  for(let i=0;i<steps;i++){
+    cur = computeNext(list, cur);
+  }
+  return cur;
 }
 
 function recomputeRotationBadges(){
@@ -327,6 +344,7 @@ function makeRowChamada(m){
     const txt=document.createElement("span"); txt.className="radioTxt"; txt.textContent=s;
     lbl.appendChild(dot); lbl.appendChild(txt);
 
+    // Mantém salvamento por clique (bom para confiabilidade)
     inp.addEventListener("change", async ()=>{
       if(!currentDateISO){ setErro("Selecione a data e verifique."); return; }
 
@@ -335,25 +353,6 @@ function makeRowChamada(m){
 
       try{
         await sbUpsertChamadas([{ medium_id:m.id, data: currentDateISO, status:s }]);
-
-        // AVANÇA ROTAÇÃO AUTOMATICAMENTE
-        if(m.group_type==="dirigente" && s==="M")  await sbPatchRotacao("mesa_dirigente", m.id);
-        if(m.group_type==="dirigente" && s==="PS") await sbPatchRotacao("psicografia_dirigente", m.id);
-        if(m.group_type==="incorporacao" && s==="M") await sbPatchRotacao("mesa_incorporacao", m.id);
-        if(m.group_type==="desenvolvimento" && s==="M") await sbPatchRotacao("mesa_desenvolvimento", m.id);
-
-        // snapshot fiel da data (com rotação já atualizada)
-        await upsertRotacaoSnapshotForDate(currentDateISO, {
-          mesa_dirigente: rotacao.mesa_dirigente,
-          mesa_incorporacao: rotacao.mesa_incorporacao,
-          mesa_desenvolvimento: rotacao.mesa_desenvolvimento,
-          psicografia_dirigente: rotacao.psicografia_dirigente
-        });
-        rotacaoView = await loadRotacaoSnapshotForDate(currentDateISO);
-
-        recomputeRotationBadges();
-        renderChamada();
-
         setOk("Salvo.");
       }catch(e){
         setErro("Erro ao salvar: " + e.message);
@@ -450,7 +449,11 @@ async function onVerificar(){
 
   currentDateISO=iso;
 
+  // carrega snapshot daquela data (se existir)
   rotacaoView = await loadRotacaoSnapshotForDate(iso);
+
+  // ✅ define a base do dia (se existe snapshot, usa ele; senão usa a rotação global atual)
+  rotacaoStart = deepCopy(rotacaoView || rotacao);
 
   if(rotacaoView){
     setOk(`Data válida: ${formatISOtoBR(iso)} • (modo histórico fiel)`);
@@ -462,54 +465,53 @@ async function onVerificar(){
   renderChamada();
 }
 
-/** ✅ CORREÇÃO PRINCIPAL: salvar chamada também atualiza rotação global corretamente */
 async function onSalvarTudo(){
   if(!currentDateISO) return setErro("Selecione uma data e clique em Verificar data.");
 
   try{
-    const activeOnly = mediumsAll.filter(m=>m.active===true);
-
-    // 1) salva todas as chamadas do dia
-    const rows = activeOnly.map(m=>({
-      medium_id: m.id,
-      data: currentDateISO,
-      status: (chamadasMap.get(m.id) || "").toUpperCase()
-    }));
+    const activeOnly=mediumsAll.filter(m=>m.active===true);
+    const rows=activeOnly.map(m=>({ medium_id:m.id, data: currentDateISO, status:(chamadasMap.get(m.id)||"") }));
     await sbUpsertChamadas(rows);
 
-    // 2) pega quem foi “M” e “PS” no dia para atualizar rotação global
-    const pick = (group_type, wantedStatus) => {
-      const found = activeOnly.find(m =>
-        m.group_type === group_type &&
-        (chamadasMap.get(m.id) || "").toUpperCase() === wantedStatus
-      );
-      return found ? found.id : null;
-    };
+    // ✅ AQUI ESTÁ A CORREÇÃO:
+    // Avança a rotação global baseado no número de M/PS marcados,
+    // partindo da rotaçãoStart (estado da fila no começo daquela data).
+    const base = rotacaoStart || rotacaoView || rotacao;
 
-    const lastMesaDir  = pick("dirigente", "M");
-    const lastMesaInc  = pick("incorporacao", "M");
-    const lastMesaDes  = pick("desenvolvimento", "M");
-    const lastPsicoDir = pick("dirigente", "PS");
+    const dirList = eligibleByGroup("dirigente");
+    const incList = eligibleByGroup("incorporacao");
+    const desList = eligibleByGroup("desenvolvimento");
+    const psList  = eligibleDirigentePsico();
 
-    if(lastMesaDir)  await sbPatchRotacao("mesa_dirigente", lastMesaDir);
-    if(lastMesaInc)  await sbPatchRotacao("mesa_incorporacao", lastMesaInc);
-    if(lastMesaDes)  await sbPatchRotacao("mesa_desenvolvimento", lastMesaDes);
-    if(lastPsicoDir) await sbPatchRotacao("psicografia_dirigente", lastPsicoDir);
+    const countMesaDir = activeOnly.filter(m=>m.group_type==="dirigente" && (chamadasMap.get(m.id)||"").toUpperCase()==="M").length;
+    const countMesaInc = activeOnly.filter(m=>m.group_type==="incorporacao" && (chamadasMap.get(m.id)||"").toUpperCase()==="M").length;
+    const countMesaDes = activeOnly.filter(m=>m.group_type==="desenvolvimento" && (chamadasMap.get(m.id)||"").toUpperCase()==="M").length;
+    const countPsico   = activeOnly.filter(m=>m.group_type==="dirigente" && (chamadasMap.get(m.id)||"").toUpperCase()==="PS").length;
 
-    // 3) grava snapshot fiel da data com a rotação já atualizada
-    await upsertRotacaoSnapshotForDate(currentDateISO, {
-      mesa_dirigente: rotacao.mesa_dirigente,
-      mesa_incorporacao: rotacao.mesa_incorporacao,
-      mesa_desenvolvimento: rotacao.mesa_desenvolvimento,
-      psicografia_dirigente: rotacao.psicografia_dirigente
-    });
+    const newLastMesaDir = advanceLastId(dirList, base.mesa_dirigente, countMesaDir);
+    const newLastMesaInc = advanceLastId(incList, base.mesa_incorporacao, countMesaInc);
+    const newLastMesaDes = advanceLastId(desList, base.mesa_desenvolvimento, countMesaDes);
+    const newLastPsico   = advanceLastId(psList,  base.psicografia_dirigente, countPsico);
 
-    // 4) atualiza view e re-renderiza
+    // Atualiza somente se houve marcações
+    if(countMesaDir>0) await sbPatchRotacao("mesa_dirigente", newLastMesaDir);
+    if(countMesaInc>0) await sbPatchRotacao("mesa_incorporacao", newLastMesaInc);
+    if(countMesaDes>0) await sbPatchRotacao("mesa_desenvolvimento", newLastMesaDes);
+    if(countPsico>0)   await sbPatchRotacao("psicografia_dirigente", newLastPsico);
+
+    // Grava snapshot fiel do "estado após salvar"
+    await upsertRotacaoSnapshotForDate(currentDateISO);
     rotacaoView = await loadRotacaoSnapshotForDate(currentDateISO);
+
+    // Para a própria tela refletir a próxima chamada corretamente:
+    // (quando existe snapshot, ele é histórico; mas o "próximo" que você quer é o global atual)
+    rotacaoView = null;
+    rotacaoStart = null;
+
     recomputeRotationBadges();
     renderChamada();
 
-    setOk("Chamada salva (rotação atualizada e snapshot gravado).");
+    setOk("Chamada salva (rotação avançada corretamente).");
   }catch(e){
     setErro("Erro ao salvar chamada: " + e.message);
   }
@@ -523,7 +525,6 @@ function groupLabel(gt){
   if(gt==="carencia") return "Carência";
   return gt||"—";
 }
-
 function matchesFilter(m){
   const g=(partFiltroGrupo?.value||"").trim();
   const q=(partBusca?.value||"").trim().toLowerCase();
@@ -531,7 +532,6 @@ function matchesFilter(m){
   if(q && !(m.name||"").toLowerCase().includes(q)) return false;
   return true;
 }
-
 function makeRowParticipante(m){
   const wrap=document.createElement("div");
   wrap.className="partRow";
@@ -577,7 +577,6 @@ function makeRowParticipante(m){
   wrap.appendChild(right);
   return wrap;
 }
-
 function renderParticipants(){
   if(!listaParticipantes) return;
   listaParticipantes.innerHTML="";
@@ -591,14 +590,12 @@ function renderParticipants(){
   }
   for(const m of filtered) listaParticipantes.appendChild(makeRowParticipante(m));
 }
-
 async function reloadParticipants(){
   mediumsAll = await sbGet(
     `mediums?select=id,name,group_type,faltas,presencas,mesa,psicografia,carencia_total,carencia_atual,primeira_incorporacao,active&order=name.asc`
   );
   renderParticipants();
 }
-
 function openEditor(m){
   const modal=document.createElement("div");
   modal.className="modalBackdrop";
@@ -681,7 +678,6 @@ function openEditor(m){
     }
   });
 }
-
 async function onAdicionarParticipante(){
   pOk(""); pErr("");
 
