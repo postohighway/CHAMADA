@@ -176,20 +176,3 @@
   <script src="app.js"></script>
 </body>
 </html>
-const payload = {
-  name: nome.trim(),
-  group_type: grupoSelecionado,     // "dirigente" | "incorporacao" | "desenvolvimento" | "carencia"
-  active: chkAtivo.checked,
-
-  // defaults obrigatórios (evita NULL)
-  faltas: 0,
-  presencas: 0,
-  mesa: chkHabilitaMesa.checked ? 1 : 0,
-  psicografia: chkPsicografia.checked ? 1 : 0,
-  carencia_total: 0,
-  carencia_atual: 0,
-  primeira_incorporacao: false
-};
-
-// aí você faz o POST/insert com esse payload
-
