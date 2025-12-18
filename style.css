@@ -331,19 +331,14 @@ body{
 
 
 
-/* ====== Próximos (cabeçalho) ====== */
-.sepLine{
-  height: 1px;
-  background: var(--line);
-  margin: 12px 0;
-  opacity: .8;
+/* Próximos para a próxima reunião */
+.nextGrid{
+  display:grid;
+  grid-template-columns: 1fr;
+  gap:6px;
+  margin-top:6px;
 }
-.miniTitle{
-  font-weight: 800;
-  letter-spacing: .2px;
-  margin-bottom: 8px;
+@media (min-width: 720px){
+  .nextGrid{ grid-template-columns: 1fr 1fr; }
 }
-.miniText{
-  line-height: 1.35;
-}
-.miniText div{ margin: 4px 0; }
+.miniCardWide{ grid-column: 1 / -1; }

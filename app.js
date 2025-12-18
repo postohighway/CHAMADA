@@ -40,11 +40,13 @@ const listaCarencia = $("listaCarencia");
 const elResumoGeral = $("resumoGeral");
 const elReservasMesa = $("reservasMesa");
 
-/** Próximos (cabeçalho) */
+
+/** ====== Próximos para a próxima reunião (header) ====== */
 const elNextMesaDirigenteName = $("nextMesaDirigenteName");
 const elNextPsicoDirigenteName = $("nextPsicoDirigenteName");
 const elNextMesaIncorpName = $("nextMesaIncorpName");
 const elNextMesaDesenvName = $("nextMesaDesenvName");
+
 
 /** ====== PARTICIPANTES UI ====== */
 const partFiltroGrupo = $("partFiltroGrupo");
@@ -76,7 +78,7 @@ let rotacao = {
 // rotação “da data selecionada” (snapshot se existir)
 let rotacaoView = null;
 
-// rotação “base do dia” (para avançar corretamente ao salvar)
+// ✅ NOVO: rotação “base” do dia (para avançar corretamente ao salvar)
 let rotacaoStart = null;
 
 let nextMesaDirigenteId = null;
@@ -158,6 +160,13 @@ async function sbDelete(table, whereQS){
   });
   if(!r.ok){ throw new Error(`${r.status} ${r.statusText}: ${await r.text()}`); }
 }
+
+
+async function sbDeleteChamada(medium_id, iso){
+  const whereQS = `medium_id=eq.${medium_id}&data=eq.${iso}`;
+  await sbDelete("chamadas", whereQS);
+}
+
 async function sbUpsertChamadas(rows){
   const r=await fetch(`${SUPABASE_URL}/rest/v1/chamadas?on_conflict=medium_id,data`,{
     method:"POST",
@@ -177,7 +186,7 @@ async function sbPatchRotacao(group_type, last_medium_id){
   rotacao[group_type] = last_medium_id;
 }
 
-/** ====== Snapshot de rotação por data (rotacao_historico) ====== */
+/** ====== Snapshot de rotação por data ====== */
 async function loadRotacaoSnapshotForDate(iso){
   const rows = await sbGet(
     `rotacao_historico?select=data,mesa_dirigente_last_id,mesa_incorporacao_last_id,mesa_desenvolvimento_last_id,psicografia_dirigente_last_id&data=eq.${iso}&limit=1`
@@ -191,7 +200,6 @@ async function loadRotacaoSnapshotForDate(iso){
     psicografia_dirigente: r.psicografia_dirigente_last_id || null
   };
 }
-
 async function upsertRotacaoSnapshotForDate(iso){
   const payload = [{
     data: iso,
@@ -231,14 +239,32 @@ async function loadBase(){
       rotacao[r.group_type] = r.last_medium_id || null;
     }
   }
-
-  renderProximosHeader();
 }
 
+
+  // Atualiza cabeçalho de “próximos”
+  renderProximosHeader();
 async function loadChamadasForDate(iso){
   const rows = await sbGet(`chamadas?select=medium_id,status&data=eq.${iso}`);
   chamadasMap = new Map(rows.map(r=>[r.medium_id, (r.status||"").toUpperCase()]));
 }
+
+
+
+async function refreshCounts(){
+  try{
+    const rows = await sbGet(`mediums?select=id,presencas,faltas&limit=1000`);
+    const map = new Map(rows.map(r=>[r.id, r]));
+    mediumsAll = mediumsAll.map(m=>{
+      const r = map.get(m.id);
+      return r ? {...m, presencas:r.presencas, faltas:r.faltas} : m;
+    });
+  }catch(e){
+    // silencioso (contadores não são críticos para salvar a chamada)
+    console.warn("refreshCounts falhou:", e.message);
+  }
+}
+
 
 /** ====== Rotação helpers ====== */
 function eligibleByGroup(group_type){
@@ -257,6 +283,8 @@ function computeNext(list, lastId){
   if(idx===-1) return list[0].id;
   return list[(idx+1)%list.length].id;
 }
+
+// ✅ Avança N posições na fila e retorna o NOVO lastId (o último que “sentou”)
 function advanceLastId(list, lastId, steps){
   if(!steps || steps<=0) return lastId || null;
   if(!list || list.length===0) return lastId || null;
@@ -267,13 +295,22 @@ function advanceLastId(list, lastId, steps){
   }
   return cur;
 }
+
+
 function findNameById(id){
   if(!id) return "—";
   const m = mediumsAll.find(x=>x.id===id);
-  return m?.name || "—";
+  return (m && m.name) ? m.name : "—";
 }
-
-/** ====== Próximos (cabeçalho) ====== */
+function computeNextSkip(list, lastId, forbiddenId){
+  if(!list || list.length===0) return null;
+  let cand = computeNext(list, lastId);
+  if(forbiddenId && cand===forbiddenId && list.length>1){
+    cand = computeNext(list, cand);
+  }
+  return cand;
+}
+/** Próximos (baseado na rotação GLOBAL atual) */
 function renderProximosHeader(){
   if(!elNextMesaDirigenteName && !elNextPsicoDirigenteName && !elNextMesaIncorpName && !elNextMesaDesenvName) return;
 
@@ -285,12 +322,12 @@ function renderProximosHeader(){
   const nextDirMesaId = computeNext(dir, rotacao.mesa_dirigente);
   const nextIncMesaId = computeNext(inc, rotacao.mesa_incorporacao);
   const nextDesMesaId = computeNext(des, rotacao.mesa_desenvolvimento);
-  const nextPsicoId   = computeNext(ps,  rotacao.psicografia_dirigente);
+  const nextPsicoId   = computeNextSkip(ps, rotacao.psicografia_dirigente, nextDirMesaId);
 
   if(elNextMesaDirigenteName) elNextMesaDirigenteName.textContent = findNameById(nextDirMesaId);
-  if(elNextMesaIncorpName) elNextMesaIncorpName.textContent = findNameById(nextIncMesaId);
-  if(elNextMesaDesenvName) elNextMesaDesenvName.textContent = findNameById(nextDesMesaId);
-  if(elNextPsicoDirigenteName) elNextPsicoDirigenteName.textContent = findNameById(nextPsicoId);
+  if(elNextMesaIncorpName)    elNextMesaIncorpName.textContent    = findNameById(nextIncMesaId);
+  if(elNextMesaDesenvName)    elNextMesaDesenvName.textContent    = findNameById(nextDesMesaId);
+  if(elNextPsicoDirigenteName)elNextPsicoDirigenteName.textContent= findNameById(nextPsicoId);
 }
 
 function recomputeRotationBadges(){
@@ -304,7 +341,7 @@ function recomputeRotationBadges(){
   nextMesaDirigenteId = computeNext(dir, base.mesa_dirigente);
   nextMesaIncorpId    = computeNext(inc, base.mesa_incorporacao);
   nextMesaDesenvId    = computeNext(des, base.mesa_desenvolvimento);
-  nextPsicoDirigenteId= computeNext(ps,  base.psicografia_dirigente);
+  nextPsicoDirigenteId= computeNextSkip(ps,  base.psicografia_dirigente, nextMesaDirigenteId);
 }
 
 /** ====== Render CHAMADA ====== */
@@ -377,15 +414,15 @@ function makeRowChamada(m){
     const txt=document.createElement("span"); txt.className="radioTxt"; txt.textContent=s;
     lbl.appendChild(dot); lbl.appendChild(txt);
 
-    // salva por clique, mas NÃO mexe na rotação aqui (rotação é no "Salvar chamada")
+    // Mantém salvamento por clique (bom para confiabilidade)
     inp.addEventListener("change", async ()=>{
       if(!currentDateISO){ setErro("Selecione a data e verifique."); return; }
+
       chamadasMap.set(m.id, s);
       renderResumo();
 
       try{
-        // só grava status válido
-        await sbUpsertChamadas([{ medium_id:m.id, data: currentDateISO, status:s }]);
+        await sbUpsertChamadas([{ medium_id:m.id, data: currentDateISO, status:s, updated_at: new Date().toISOString() }]);
         setOk("Salvo.");
       }catch(e){
         setErro("Erro ao salvar: " + e.message);
@@ -400,10 +437,10 @@ function makeRowChamada(m){
   btn.className="btnSmall"; btn.textContent="Limpar";
   btn.addEventListener("click", async ()=>{
     if(!currentDateISO){ setErro("Selecione a data e verifique."); return; }
-    // NÃO grava status vazio (constraint). Só limpa localmente e remove do banco.
     chamadasMap.set(m.id,"");
     try{
-      await sbDelete("chamadas", `medium_id=eq.${m.id}&data=eq.${currentDateISO}`);
+      await sbDeleteChamada(m.id, currentDateISO);
+      chamadasMap.delete(m.id);
       renderChamada();
       setOk("Limpo.");
     }catch(e){
@@ -468,7 +505,7 @@ function renderResumo(){
   if(elReservasMesa) elReservasMesa.textContent = reservas.length ? reservas.join(", ") : "—";
 }
 
-/** ====== Verificar data ====== */
+/** ====== Verificar data / salvar tudo ====== */
 async function onVerificar(){
   setErro("");
   const val = elData?.value || "";
@@ -481,49 +518,41 @@ async function onVerificar(){
   if(!isTuesday(iso)) return setErro("Essa data não é terça-feira.");
   if(feriadosSet.has(iso)) return setErro("Essa data está marcada como feriado.");
 
-  currentDateISO = iso;
+  currentDateISO=iso;
 
-  // snapshot daquela data (se existir)
+  // carrega snapshot daquela data (se existir)
   rotacaoView = await loadRotacaoSnapshotForDate(iso);
 
-  // se não existe snapshot: vamos decidir a base
-  const rotacaoGlobalVazia = !rotacao.mesa_dirigente && !rotacao.mesa_incorporacao && !rotacao.mesa_desenvolvimento && !rotacao.psicografia_dirigente;
+  // ✅ define a base do dia (se existe snapshot, usa ele; senão usa a rotação global atual)
+  rotacaoStart = deepCopy(rotacaoView || rotacao);
 
   if(rotacaoView){
     setOk(`Data válida: ${formatISOtoBR(iso)} • (modo histórico fiel)`);
-  } else if(rotacaoGlobalVazia){
-    // primeira chamada do sistema
-    rotacaoView = { mesa_dirigente:null, mesa_incorporacao:null, mesa_desenvolvimento:null, psicografia_dirigente:null };
-    setOk(`Data válida: ${formatISOtoBR(iso)} • (primeira chamada do sistema)`);
-  } else {
-    setOk(`Data válida: ${formatISOtoBR(iso)} • (usando rotação atual)`);
+  }else{
+    setOk(`Data válida: ${formatISOtoBR(iso)} • (sem snapshot — usando rotação atual)`);
   }
-
-  // base do dia (para avançar quando salvar)
-  rotacaoStart = deepCopy(rotacaoView || rotacao);
 
   await loadChamadasForDate(iso);
   renderChamada();
+  await refreshCounts();
+  renderChamada();
+  renderProximosHeader();
 }
 
-/** ====== Salvar chamada (avança rotação) ====== */
 async function onSalvarTudo(){
   if(!currentDateISO) return setErro("Selecione uma data e clique em Verificar data.");
 
   try{
-    const activeOnly = mediumsAll.filter(m=>m.active===true);
+    const activeOnly=mediumsAll.filter(m=>m.active===true);
+    const rows=activeOnly
+      .map(m=>({ medium_id:m.id, data: currentDateISO, status:(chamadasMap.get(m.id)||"").toUpperCase(), updated_at: new Date().toISOString() }))
+      .filter(r=>["P","M","F","PS"].includes(r.status));
+    await sbUpsertChamadas(rows);
+    await refreshCounts();
 
-    // ✅ só salva status válidos (nunca "" → evita constraint)
-    const rows = [];
-    for(const m of activeOnly){
-      const st = (chamadasMap.get(m.id) || "").toUpperCase();
-      if(st==="P" || st==="M" || st==="F" || st==="PS"){
-        rows.push({ medium_id:m.id, data: currentDateISO, status: st });
-      }
-    }
-    if(rows.length>0) await sbUpsertChamadas(rows);
-
-    // ✅ avança rotação baseado no que foi marcado nesta data
+    // ✅ AQUI ESTÁ A CORREÇÃO:
+    // Avança a rotação global baseado no número de M/PS marcados,
+    // partindo da rotaçãoStart (estado da fila no começo daquela data).
     const base = rotacaoStart || rotacaoView || rotacao;
 
     const dirList = eligibleByGroup("dirigente");
@@ -541,19 +570,25 @@ async function onSalvarTudo(){
     const newLastMesaDes = advanceLastId(desList, base.mesa_desenvolvimento, countMesaDes);
     const newLastPsico   = advanceLastId(psList,  base.psicografia_dirigente, countPsico);
 
+    // Atualiza somente se houve marcações
     if(countMesaDir>0) await sbPatchRotacao("mesa_dirigente", newLastMesaDir);
     if(countMesaInc>0) await sbPatchRotacao("mesa_incorporacao", newLastMesaInc);
     if(countMesaDes>0) await sbPatchRotacao("mesa_desenvolvimento", newLastMesaDes);
     if(countPsico>0)   await sbPatchRotacao("psicografia_dirigente", newLastPsico);
 
-    // snapshot do dia (após avançar rotação)
+    // Grava snapshot fiel do "estado após salvar"
     await upsertRotacaoSnapshotForDate(currentDateISO);
+    rotacaoView = await loadRotacaoSnapshotForDate(currentDateISO);
 
-    // limpa modo histórico da tela para mostrar "próximos" pela rotação global atual
+
+    // Atualiza cabeçalho com os próximos
+    renderProximosHeader();
+
+    // Para a própria tela refletir a próxima chamada corretamente:
+    // (quando existe snapshot, ele é histórico; mas o "próximo" que você quer é o global atual)
     rotacaoView = null;
     rotacaoStart = null;
 
-    renderProximosHeader();
     recomputeRotationBadges();
     renderChamada();
 
@@ -641,7 +676,6 @@ async function reloadParticipants(){
     `mediums?select=id,name,group_type,faltas,presencas,mesa,psicografia,carencia_total,carencia_atual,primeira_incorporacao,active&order=name.asc`
   );
   renderParticipants();
-  renderProximosHeader();
 }
 function openEditor(m){
   const modal=document.createElement("div");
