@@ -67,9 +67,6 @@ let feriadosSet = new Set();
 let mediumsAll = [];
 let chamadasMap = new Map();
 
-// ✅ NOVO: guarda ordem/tempo do último clique por médium (para o "último clique" definir a rotação)
-let selectionOrder = new Map(); // medium_id -> timestamp (ms)
-
 // rotação “global atual” (tabela rotacao)
 let rotacao = {
   mesa_dirigente: null,
@@ -183,7 +180,7 @@ async function sbPatchRotacao(group_type, last_medium_id){
   const r=await fetch(url,{
     method:"PATCH",
     headers:{...headersJson(), Prefer:"return=minimal"},
-    body: JSON.stringify({ last_medium_id, updated_at: new Date().toISOString() })
+    body: JSON.stringify({ last_medium_id })
   });
   if(!r.ok){ throw new Error(`${r.status} ${r.statusText}: ${await r.text()}`); }
   rotacao[group_type] = last_medium_id;
@@ -297,44 +294,6 @@ function advanceLastId(list, lastId, steps){
     cur = computeNext(list, cur);
   }
   return cur;
-}
-
-
-// ✅ Retorna o ID do "último selecionado" em um grupo/status, respeitando:
-// 1) ordem real de clique (selectionOrder)
-// 2) fallback: última posição na lista elegível (ordem alfabética usada na rotação)
-function lastSelectedIdInList(list, status){
-  if(!list || list.length===0) return null;
-
-  const idxMap = new Map(list.map((m,i)=>[m.id,i]));
-  const selected = list.filter(m => (chamadasMap.get(m.id)||"").toUpperCase()===status);
-
-  if(selected.length===0) return null;
-
-  let hasTs = false;
-  for(const m of selected){
-    const ts = selectionOrder.get(m.id);
-    if(typeof ts === "number" && ts>0){ hasTs=true; break; }
-  }
-
-  if(hasTs){
-    let bestId = selected[0].id;
-    let bestTs = selectionOrder.get(bestId) || 0;
-    for(const m of selected){
-      const ts = selectionOrder.get(m.id) || 0;
-      if(ts > bestTs){ bestTs = ts; bestId = m.id; }
-    }
-    return bestId;
-  }
-
-  // fallback: pega o que está mais "embaixo" na lista (maior índice)
-  let best = selected[0].id;
-  let bestIdx = idxMap.get(best) ?? -1;
-  for(const m of selected){
-    const i = idxMap.get(m.id) ?? -1;
-    if(i > bestIdx){ bestIdx = i; best = m.id; }
-  }
-  return best;
 }
 
 
@@ -460,12 +419,10 @@ function makeRowChamada(m){
       if(!currentDateISO){ setErro("Selecione a data e verifique."); return; }
 
       chamadasMap.set(m.id, s);
-      // registra ordem do clique para o "último clique" mandar na rotação
-      selectionOrder.set(m.id, Date.now());
       renderResumo();
 
       try{
-        await sbUpsertChamadas([{ medium_id:m.id, data: currentDateISO, status:s, updated_at: new Date().toISOString() }]);
+        await sbUpsertChamadas([{ medium_id:m.id, data: currentDateISO, status:s }]);
         setOk("Salvo.");
       }catch(e){
         setErro("Erro ao salvar: " + e.message);
@@ -481,7 +438,6 @@ function makeRowChamada(m){
   btn.addEventListener("click", async ()=>{
     if(!currentDateISO){ setErro("Selecione a data e verifique."); return; }
     chamadasMap.set(m.id,"");
-    selectionOrder.delete(m.id);
     try{
       await sbDeleteChamada(m.id, currentDateISO);
       chamadasMap.delete(m.id);
@@ -563,8 +519,6 @@ async function onVerificar(){
   if(feriadosSet.has(iso)) return setErro("Essa data está marcada como feriado.");
 
   currentDateISO=iso;
-  // zera ordem de cliques ao trocar a data
-  selectionOrder = new Map();
 
   // carrega snapshot daquela data (se existir)
   rotacaoView = await loadRotacaoSnapshotForDate(iso);
@@ -591,15 +545,14 @@ async function onSalvarTudo(){
   try{
     const activeOnly=mediumsAll.filter(m=>m.active===true);
     const rows=activeOnly
-      .map(m=>({ medium_id:m.id, data: currentDateISO, status:(chamadasMap.get(m.id)||"").toUpperCase(), updated_at: new Date().toISOString() }))
+      .map(m=>({ medium_id:m.id, data: currentDateISO, status:(chamadasMap.get(m.id)||"").toUpperCase() }))
       .filter(r=>["P","M","F","PS"].includes(r.status));
     await sbUpsertChamadas(rows);
     await refreshCounts();
 
-    // ✅ AQUI ESTÁ A CORREÇÃO (VERSÃO DEFINITIVA):
-    // A rotação NÃO deve avançar por "quantidade" apenas.
-    // Ela deve avançar para o ÚLTIMO que efetivamente sentou/psicografou,
-    // respeitando o seu jeito de operar: o último clique define quem foi o último da fila.
+    // ✅ AQUI ESTÁ A CORREÇÃO:
+    // Avança a rotação global baseado no número de M/PS marcados,
+    // partindo da rotaçãoStart (estado da fila no começo daquela data).
     const base = rotacaoStart || rotacaoView || rotacao;
 
     const dirList = eligibleByGroup("dirigente");
@@ -607,28 +560,21 @@ async function onSalvarTudo(){
     const desList = eligibleByGroup("desenvolvimento");
     const psList  = eligibleDirigentePsico();
 
-    // último selecionado em cada fila
-    const lastMesaDirId = lastSelectedIdInList(dirList, "M");
-    const lastMesaIncId = lastSelectedIdInList(incList, "M");
-    const lastMesaDesId = lastSelectedIdInList(desList, "M");
-    const lastPsicoId   = lastSelectedIdInList(psList,  "PS");
+    const countMesaDir = activeOnly.filter(m=>m.group_type==="dirigente" && (chamadasMap.get(m.id)||"").toUpperCase()==="M").length;
+    const countMesaInc = activeOnly.filter(m=>m.group_type==="incorporacao" && (chamadasMap.get(m.id)||"").toUpperCase()==="M").length;
+    const countMesaDes = activeOnly.filter(m=>m.group_type==="desenvolvimento" && (chamadasMap.get(m.id)||"").toUpperCase()==="M").length;
+    const countPsico   = activeOnly.filter(m=>m.group_type==="dirigente" && (chamadasMap.get(m.id)||"").toUpperCase()==="PS").length;
 
-    // Regra dura: não permitir que o mesmo dirigente seja Mesa e Psicografia no mesmo dia
-    if(lastMesaDirId && lastPsicoId && lastMesaDirId === lastPsicoId){
-      throw new Error("Conflito: o mesmo dirigente não pode estar como Mesa (M) e Psicografia (PS) na mesma chamada.");
-    }
-
-    // Se ninguém marcou naquela fila, mantém o lastId base do dia
-    const newLastMesaDir = lastMesaDirId || base.mesa_dirigente || null;
-    const newLastMesaInc = lastMesaIncId || base.mesa_incorporacao || null;
-    const newLastMesaDes = lastMesaDesId || base.mesa_desenvolvimento || null;
-    const newLastPsico   = lastPsicoId   || base.psicografia_dirigente || null;
+    const newLastMesaDir = advanceLastId(dirList, base.mesa_dirigente, countMesaDir);
+    const newLastMesaInc = advanceLastId(incList, base.mesa_incorporacao, countMesaInc);
+    const newLastMesaDes = advanceLastId(desList, base.mesa_desenvolvimento, countMesaDes);
+    const newLastPsico   = advanceLastId(psList,  base.psicografia_dirigente, countPsico);
 
     // Atualiza somente se houve marcações
-    if(lastMesaDirId) await sbPatchRotacao("mesa_dirigente", newLastMesaDir);
-    if(lastMesaIncId) await sbPatchRotacao("mesa_incorporacao", newLastMesaInc);
-    if(lastMesaDesId) await sbPatchRotacao("mesa_desenvolvimento", newLastMesaDes);
-    if(lastPsicoId)   await sbPatchRotacao("psicografia_dirigente", newLastPsico);
+    if(countMesaDir>0) await sbPatchRotacao("mesa_dirigente", newLastMesaDir);
+    if(countMesaInc>0) await sbPatchRotacao("mesa_incorporacao", newLastMesaInc);
+    if(countMesaDes>0) await sbPatchRotacao("mesa_desenvolvimento", newLastMesaDes);
+    if(countPsico>0)   await sbPatchRotacao("psicografia_dirigente", newLastPsico);
 
     // Grava snapshot fiel do "estado após salvar"
     await upsertRotacaoSnapshotForDate(currentDateISO);
