@@ -4,7 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Chamada de Médiuns</title>
-  <link rel="stylesheet" href="style.css?v=20260115" />
+
+  <!-- Cache-busting para iPhone (atalho/PWA) -->
+  <link rel="stylesheet" href="style.css?v=2026-01-15-a" />
 </head>
 
 <body>
@@ -13,6 +15,10 @@
       <h1>Chamada de Médiuns</h1>
       <p class="sub">Reunião: terça-feira 18:30 (exceto feriados)</p>
 
+      <!-- Assinatura de versão (prova visual de cache correto) -->
+      <div class="versionPill">Versão: <strong>2026-01-15-a</strong></div>
+
+      <!-- Tabs -->
       <div class="tabs">
         <button id="tabChamada" class="tabBtn active" type="button">Chamada</button>
         <button id="tabParticipantes" class="tabBtn" type="button">Participantes</button>
@@ -22,6 +28,7 @@
 
   <main class="container">
 
+    <!-- ==================== ABA CHAMADA ==================== -->
     <section id="viewChamada">
       <div class="card">
         <div class="topRow">
@@ -85,6 +92,7 @@
       <div id="listaCarencia" class="list"></div>
     </section>
 
+    <!-- ==================== ABA PARTICIPANTES ==================== -->
     <section id="viewParticipantes" style="display:none;">
       <div class="card">
         <div class="topRow">
@@ -93,7 +101,7 @@
               <span class="dotLed"></span>
               <span>Participantes</span>
             </span>
-            <span class="muted">Adicionar / editar / excluir</span>
+            <span class="muted">Adicionar / editar</span>
           </div>
         </div>
 
@@ -102,74 +110,64 @@
             <label class="label">Filtrar por grupo</label>
             <select id="partFiltroGrupo" class="input">
               <option value="">Todos</option>
-              <option value="dirigente">Dirigentes</option>
-              <option value="incorporacao">Incorporação</option>
-              <option value="desenvolvimento">Desenvolvimento</option>
-              <option value="carencia">Carência</option>
-            </select>
-          </div>
-
-          <div>
-            <label class="label">Buscar por nome</label>
-            <input id="partBusca" class="input" placeholder="Digite parte do nome..." />
-          </div>
-        </div>
-
-        <div class="actionsRow">
-          <button id="btnRecarregarParticipantes" class="btn" type="button">Recarregar lista</button>
-        </div>
-
-        <div class="divider"></div>
-
-        <h3 class="miniHeading">Novo participante</h3>
-
-        <div class="grid3">
-          <div>
-            <label class="label">Nome</label>
-            <input id="novoNome" class="input" placeholder="Ex: Adriana Ferreira" />
-          </div>
-
-          <div>
-            <label class="label">Grupo</label>
-            <select id="novoGrupo" class="input">
               <option value="dirigente">Dirigente</option>
               <option value="incorporacao">Incorporação</option>
               <option value="desenvolvimento">Desenvolvimento</option>
               <option value="carencia">Carência</option>
             </select>
           </div>
-
-          <div class="checks">
-            <label class="check">
-              <input id="novoAtivo" type="checkbox" checked />
-              <span>Ativo</span>
-            </label>
-
-            <label class="check">
-              <input id="novoMesa" type="checkbox" />
-              <span>Habilita Mesa (amarelo)</span>
-            </label>
-
-            <label class="check">
-              <input id="novoPsico" type="checkbox" />
-              <span>Habilita Psicografia (vermelho)</span>
-            </label>
+          <div>
+            <label class="label">Buscar nome</label>
+            <input id="partBusca" class="input" type="text" placeholder="Digite para buscar..." />
           </div>
         </div>
 
         <div class="actionsRow">
-          <button id="btnAdicionarParticipante" class="btn primary" type="button">Adicionar participante</button>
+          <button id="btnRecarregarParticipantes" class="btn" type="button">Recarregar</button>
+        </div>
+
+        <div class="msgs">
           <div id="partMsg" class="msgOk"></div>
           <div id="partErr" class="msgErr"></div>
         </div>
-      </div>
 
-      <h2 class="sectionTitle">Lista de participantes</h2>
-      <div id="listaParticipantes" class="list"></div>
+        <div id="listaParticipantes" class="list"></div>
+
+        <hr class="sep" />
+
+        <h2 class="sectionTitle">Adicionar participante</h2>
+
+        <div class="grid2">
+          <div>
+            <label class="label">Nome</label>
+            <input id="novoNome" class="input" type="text" />
+          </div>
+          <div>
+            <label class="label">Grupo</label>
+            <select id="novoGrupo" class="input">
+              <option value="dirigente">Dirigente</option>
+              <option value="incorporacao" selected>Incorporação</option>
+              <option value="desenvolvimento">Desenvolvimento</option>
+              <option value="carencia">Carência</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="checks">
+          <label class="check"><input id="novoAtivo" type="checkbox" checked /> <span>Ativo</span></label>
+          <label class="check"><input id="novoMesa" type="checkbox" /> <span>Pode sentar na mesa</span></label>
+          <label class="check"><input id="novoPsico" type="checkbox" /> <span>Pode psicografar</span></label>
+        </div>
+
+        <div class="actionsRow">
+          <button id="btnAdicionarParticipante" class="btn primary" type="button">Adicionar</button>
+        </div>
+      </div>
     </section>
 
   </main>
 
-  <script src="app.js?v=20260115"></script>
+  <!-- Cache-busting para iPhone (atalho/PWA) -->
+  <script src="app.js?v=2026-01-15-a"></script>
 </body>
 </html>
