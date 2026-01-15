@@ -2,87 +2,174 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Chamada de Médiuns</title>
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=20260115" />
 </head>
+
 <body>
-  <div class="wrap">
-    <header class="hero">
+  <header class="hero">
+    <div class="container">
       <h1>Chamada de Médiuns</h1>
       <p class="sub">Reunião: terça-feira 18:30 (exceto feriados)</p>
 
       <div class="tabs">
-        <button id="tabChamada" class="tab active" type="button">Chamada</button>
-        <button id="tabParticipantes" class="tab" type="button">Participantes</button>
+        <button id="tabChamada" class="tabBtn active" type="button">Chamada</button>
+        <button id="tabParticipantes" class="tabBtn" type="button">Participantes</button>
       </div>
-    </header>
+    </div>
+  </header>
 
-    <section id="viewChamada" class="card">
-      <div class="row">
-        <div id="statusPill" class="pill">Supabase</div>
-        <div id="statusText" class="muted">—</div>
+  <main class="container">
+
+    <section id="viewChamada">
+      <div class="card">
+        <div class="topRow">
+          <div class="status">
+            <span id="statusPill" class="pill">
+              <span class="dotLed"></span>
+              <span id="statusText">Conectando...</span>
+            </span>
+            <span class="muted">Supabase OK</span>
+          </div>
+        </div>
+
+        <div class="grid2">
+          <div>
+            <label class="label">Data da chamada</label>
+            <input id="dataChamada" class="input" type="date" />
+          </div>
+          <div class="actions">
+            <button id="btnVerificar" class="btn" type="button">Verificar data</button>
+            <button id="btnSalvar" class="btn primary" type="button">Salvar chamada</button>
+          </div>
+        </div>
+
+        <div class="msgs">
+          <div id="msgTopo" class="msgOk"></div>
+          <div id="msgErro" class="msgErr"></div>
+        </div>
+
+        <div class="grid2">
+          <div class="miniCard">
+            <div class="miniTitle">Resumo geral</div>
+            <div id="resumoGeral" class="miniValue">P:0 M:0 F:0 PS:0 | Presença:0% | Faltas:0%</div>
+          </div>
+          <div class="miniCard">
+            <div class="miniTitle">Reservas da mesa (M)</div>
+            <div id="reservasMesa" class="miniValue">—</div>
+          </div>
+        </div>
       </div>
 
-      <div class="row">
-        <label class="label">Data da chamada</label>
-        <input id="dataChamada" type="date" />
+      <div class="miniCard miniCardWide">
+        <div class="miniTitle">Próximos para a próxima reunião</div>
+        <div class="nextGrid">
+          <div><strong>Dirigente (Mesa):</strong> <span id="nextMesaDirigenteName">—</span></div>
+          <div><strong>Dirigente (Psicografia):</strong> <span id="nextPsicoDirigenteName">—</span></div>
+          <div><strong>Incorporação (Mesa):</strong> <span id="nextMesaIncorpName">—</span></div>
+          <div><strong>Desenvolvimento (Mesa):</strong> <span id="nextMesaDesenvName">—</span></div>
+        </div>
       </div>
 
-      <div class="row buttons">
-        <button id="btnVerificar" type="button">Verificar data</button>
-        <button id="btnSalvar" type="button">Salvar chamada</button>
-      </div>
-
-      <div id="msgTopo" class="msg"></div>
-      <div id="msgErro" class="msg err"></div>
-
-      <div class="sectionTitle">Resumo geral</div>
-      <div id="resumoGeral" class="mono">—</div>
-
-      <div class="sectionTitle">Reservas da mesa (M)</div>
-      <div id="reservasMesa" class="mono">—</div>
-
-      <div class="sectionTitle">Próximos para a próxima reunião</div>
-      <div class="mono">
-        <div><b>Dirigente (Mesa):</b> <span id="nextMesaDirigenteName">—</span></div>
-        <div><b>Dirigente (Psicografia):</b> <span id="nextPsicoDirigenteName">—</span></div>
-        <div><b>Incorporação (Mesa):</b> <span id="nextMesaIncorpName">—</span></div>
-        <div><b>Desenvolvimento (Mesa):</b> <span id="nextMesaDesenvName">—</span></div>
-      </div>
-
-      <div class="sectionTitle">Dirigentes</div>
+      <h2 class="sectionTitle">Dirigentes</h2>
       <div id="listaDirigentes" class="list"></div>
 
-      <div class="sectionTitle">Médiuns de Incorporação</div>
+      <h2 class="sectionTitle">Médiuns de Incorporação</h2>
       <div id="listaIncorporacao" class="list"></div>
 
-      <div class="sectionTitle">Médiuns em Desenvolvimento</div>
+      <h2 class="sectionTitle">Médiuns em Desenvolvimento</h2>
       <div id="listaDesenvolvimento" class="list"></div>
+
+      <h2 class="sectionTitle">Médiuns em Carência</h2>
+      <div id="listaCarencia" class="list"></div>
     </section>
 
-    <section id="viewParticipantes" class="card hidden">
-      <div class="sectionTitle">Participantes</div>
+    <section id="viewParticipantes" style="display:none;">
+      <div class="card">
+        <div class="topRow">
+          <div class="status">
+            <span class="pill ok">
+              <span class="dotLed"></span>
+              <span>Participantes</span>
+            </span>
+            <span class="muted">Adicionar / editar / excluir</span>
+          </div>
+        </div>
 
-      <div class="row">
-        <label class="label">Buscar</label>
-        <input id="busca" type="text" placeholder="Nome..." />
+        <div class="grid2">
+          <div>
+            <label class="label">Filtrar por grupo</label>
+            <select id="partFiltroGrupo" class="input">
+              <option value="">Todos</option>
+              <option value="dirigente">Dirigentes</option>
+              <option value="incorporacao">Incorporação</option>
+              <option value="desenvolvimento">Desenvolvimento</option>
+              <option value="carencia">Carência</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="label">Buscar por nome</label>
+            <input id="partBusca" class="input" placeholder="Digite parte do nome..." />
+          </div>
+        </div>
+
+        <div class="actionsRow">
+          <button id="btnRecarregarParticipantes" class="btn" type="button">Recarregar lista</button>
+        </div>
+
+        <div class="divider"></div>
+
+        <h3 class="miniHeading">Novo participante</h3>
+
+        <div class="grid3">
+          <div>
+            <label class="label">Nome</label>
+            <input id="novoNome" class="input" placeholder="Ex: Adriana Ferreira" />
+          </div>
+
+          <div>
+            <label class="label">Grupo</label>
+            <select id="novoGrupo" class="input">
+              <option value="dirigente">Dirigente</option>
+              <option value="incorporacao">Incorporação</option>
+              <option value="desenvolvimento">Desenvolvimento</option>
+              <option value="carencia">Carência</option>
+            </select>
+          </div>
+
+          <div class="checks">
+            <label class="check">
+              <input id="novoAtivo" type="checkbox" checked />
+              <span>Ativo</span>
+            </label>
+
+            <label class="check">
+              <input id="novoMesa" type="checkbox" />
+              <span>Habilita Mesa (amarelo)</span>
+            </label>
+
+            <label class="check">
+              <input id="novoPsico" type="checkbox" />
+              <span>Habilita Psicografia (vermelho)</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="actionsRow">
+          <button id="btnAdicionarParticipante" class="btn primary" type="button">Adicionar participante</button>
+          <div id="partMsg" class="msgOk"></div>
+          <div id="partErr" class="msgErr"></div>
+        </div>
       </div>
 
-      <div class="row">
-        <label class="label">Mostrar</label>
-        <select id="filtroGrupo">
-          <option value="">Todos</option>
-          <option value="mesa_dirigente">Dirigente</option>
-          <option value="mesa_incorporacao">Incorporação</option>
-          <option value="mesa_desenvolvimento">Desenvolvimento</option>
-        </select>
-      </div>
-
+      <h2 class="sectionTitle">Lista de participantes</h2>
       <div id="listaParticipantes" class="list"></div>
     </section>
-  </div>
 
-  <script src="app.js"></script>
+  </main>
+
+  <script src="app.js?v=20260115"></script>
 </body>
 </html>
