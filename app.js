@@ -1,18 +1,10 @@
 /* ============================================================
    CHAMADA DE MEDIUNS - app.js
-   Versao: 2026-01-15-b
-   Regras:
-   - Rotacao avanca pelo ULTIMO clique efetivo:
-     * Mesa dirigente: ultimo M em dirigente
-     * Psicografia: ultimo PS em dirigente
-     * Mesa incorp: ultimo M em incorporacao (4 por reuniao na pratica)
-     * Mesa desenv: ultimo M em desenvolvimento (4 por reuniao na pratica)
-   - Falta (F) nao avanca fila.
-   - Todo dirigente pode psicografar.
-   - Supabase rotacao.group_type: mesa_dirigente, mesa_incorporacao, mesa_desenvolvimento, psicografia
+   Versao: 2026-01-15-c
+   FIX PRINCIPAL: ordem de fila por (ordem_grupo, sort_order, name)
    ============================================================ */
 
-console.log("APP.JS CARREGADO: 2026-01-15-b");
+console.log("APP.JS CARREGADO: 2026-01-15-c");
 
 /* ====== SUPABASE ====== */
 const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co";
@@ -55,16 +47,6 @@ async function sbPatch(path, body, prefer = "return=minimal") {
   const t = await r.text();
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}: ${t}`);
   return t ? JSON.parse(t) : [];
-}
-
-async function sbDelete(path) {
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-    method: "DELETE",
-    headers: headersJson("return=minimal"),
-  });
-  const t = await r.text();
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}: ${t}`);
-  return true;
 }
 
 /* Upsert de chamadas por conflito medium_id,data (precisa unique no banco) */
@@ -144,51 +126,48 @@ let rotacao = {
   mesa_desenvolvimento: null,
   psicografia: null,
 };
-
 let currentDateISO = null;
 
-/* status do dia: medium_id -> P/M/F/PS */
 let chamadasMap = new Map();
 
 /* timestamps de clique: last-click wins */
-const tsMesa = new Map();  // medium_id -> timestamp quando marcou M
-const tsPsico = new Map(); // medium_id -> timestamp quando marcou PS
+const tsMesa = new Map();
+const tsPsico = new Map();
 
 /* ====== UI helpers ====== */
-function setOk(msg = "") {
-  msgTopo.textContent = msg;
-  msgErro.textContent = "";
-}
-function setErro(msg = "") {
-  msgErro.textContent = msg;
-}
-function setConn(ok, msg) {
-  statusPill.classList.toggle("ok", !!ok);
-  statusPill.classList.toggle("bad", !ok);
-  statusText.textContent = msg;
+function setOk(msg = "") { msgTopo.textContent = msg; msgErro.textContent = ""; }
+function setErro(msg = "") { msgErro.textContent = msg; }
+function setConn(ok, msg) { statusText.textContent = msg; }
+
+function pOk(msg = "") { partMsg.textContent = msg; partErr.textContent = ""; }
+function pErr(msg = "") { partErr.textContent = msg; partMsg.textContent = ""; }
+
+function nameOf(m) { return m.name ?? m.nome ?? "(sem nome)"; }
+function numOrInf(v) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
 }
 
-function pOk(msg = "") {
-  partMsg.textContent = msg;
-  partErr.textContent = "";
-}
-function pErr(msg = "") {
-  partErr.textContent = msg;
-  partMsg.textContent = "";
-}
+/* ORDENACAO CORRETA: fila por ordem_grupo / sort_order / nome */
+function byQueue(a, b) {
+  const ag = numOrInf(a.ordem_grupo);
+  const bg = numOrInf(b.ordem_grupo);
+  if (ag !== bg) return ag - bg;
 
-function nameOf(m) {
-  return m.name ?? m.nome ?? "(sem nome)";
-}
-function byName(a, b) {
+  const as = numOrInf(a.sort_order);
+  const bs = numOrInf(b.sort_order);
+  if (as !== bs) return as - bs;
+
   return nameOf(a).localeCompare(nameOf(b), "pt-BR", { sensitivity: "base" });
 }
+
 function eligible(group_type) {
   return mediumsAll
     .filter((m) => m.active === true && m.group_type === group_type)
     .slice()
-    .sort(byName);
+    .sort(byQueue);
 }
+
 /* regra: todo dirigente pode psicografar */
 function eligiblePsicoDirigentes() {
   return eligible("dirigente");
@@ -202,6 +181,7 @@ function computeNext(list, lastId) {
   if (idx === -1) return list[0];
   return list[(idx + 1) % list.length];
 }
+
 function computeNextSkip(list, lastId, skipId) {
   if (!list.length) return null;
   let n = computeNext(list, lastId);
@@ -209,6 +189,7 @@ function computeNextSkip(list, lastId, skipId) {
   if (n && n.id === skipId) n = computeNext(list, n.id);
   return n;
 }
+
 function pickLastClicked(ids, tsMap) {
   let bestId = null;
   let bestTs = -1;
@@ -225,10 +206,12 @@ function pickLastClicked(ids, tsMap) {
 
 /* ====== LOAD ====== */
 async function loadMediums() {
+  // IMPORTANTISSIMO: trazer ordem_grupo e sort_order
   mediumsAll = await sbGet(
-    "mediums?select=id,name,group_type,active,presencas,faltas,mesa,psicografia&order=name.asc"
+    "mediums?select=id,name,group_type,active,presencas,faltas,mesa,psicografia,ordem_grupo,sort_order"
   );
 }
+
 async function loadRotacao() {
   const rows = await sbGet("rotacao?select=group_type,last_medium_id");
   rotacao = {
@@ -243,6 +226,7 @@ async function loadRotacao() {
     }
   }
 }
+
 async function loadChamadasForDate(iso) {
   chamadasMap = new Map();
   tsMesa.clear();
@@ -250,14 +234,7 @@ async function loadChamadasForDate(iso) {
 
   const rows = await sbGet(`chamadas?select=medium_id,status&data=eq.${iso}`);
   for (const r of rows) {
-    const st = (r.status || "").toUpperCase();
-    chamadasMap.set(r.medium_id, st);
-
-    /* IMPORTANTE:
-       - o banco nao tem timestamp de clique; entao carregando do banco nao preenche tsMesa/tsPsico.
-       - o "last-click wins" funciona para o fluxo da reuniao (clicando).
-       - ao salvar, se voce nao clicou nada, ele nao muda rotacao.
-    */
+    chamadasMap.set(r.medium_id, (r.status || "").toUpperCase());
   }
 }
 
@@ -266,7 +243,7 @@ function renderProximos() {
   const dir = eligible("dirigente");
   const inc = eligible("incorporacao");
   const des = eligible("desenvolvimento");
-  const ps = eligiblePsicoDirigentes();
+  const ps  = eligiblePsicoDirigentes();
 
   const nextMesaDir = computeNext(dir, rotacao.mesa_dirigente);
   const nextMesaInc = computeNext(inc, rotacao.mesa_incorporacao);
@@ -275,9 +252,9 @@ function renderProximos() {
   const nextPsico = computeNextSkip(ps, rotacao.psicografia, nextMesaDir ? nextMesaDir.id : null);
 
   nextMesaDirigenteName.textContent = nextMesaDir ? nameOf(nextMesaDir) : "—";
-  nextMesaIncorpName.textContent = nextMesaInc ? nameOf(nextMesaInc) : "—";
-  nextMesaDesenvName.textContent = nextMesaDes ? nameOf(nextMesaDes) : "—";
-  nextPsicoDirigenteName.textContent = nextPsico ? nameOf(nextPsico) : "—";
+  nextMesaIncorpName.textContent    = nextMesaInc ? nameOf(nextMesaInc) : "—";
+  nextMesaDesenvName.textContent    = nextMesaDes ? nameOf(nextMesaDes) : "—";
+  nextPsicoDirigenteName.textContent= nextPsico ? nameOf(nextPsico) : "—";
 }
 
 /* ====== RESUMO ====== */
@@ -370,10 +347,8 @@ function makeRow(m) {
         setErro("Selecione a data e clique em Verificar data.");
         return;
       }
-
       chamadasMap.set(m.id, s);
 
-      /* last click wins */
       if (s === "M") tsMesa.set(m.id, Date.now()); else tsMesa.delete(m.id);
       if (s === "PS") tsPsico.set(m.id, Date.now()); else tsPsico.delete(m.id);
 
@@ -390,15 +365,11 @@ function makeRow(m) {
   return wrap;
 }
 
-function clearLists() {
+function renderChamada() {
   listaDirigentes.innerHTML = "";
   listaIncorporacao.innerHTML = "";
   listaDesenvolvimento.innerHTML = "";
   listaCarencia.innerHTML = "";
-}
-
-function renderChamada() {
-  clearLists();
 
   const dir = eligible("dirigente");
   const inc = eligible("incorporacao");
@@ -419,19 +390,19 @@ async function persistRotacaoFromClicks() {
   const active = mediumsAll.filter((m) => m.active === true);
 
   const dirMesaIds = active
-    .filter((m) => m.group_type === "dirigente" && (chamadasMap.get(m.id) || "").toUpperCase() === "M")
+    .filter((m) => m.group_type === "dirigente" && (chamadasMap.get(m.id) || "") === "M")
     .map((m) => m.id);
 
   const incMesaIds = active
-    .filter((m) => m.group_type === "incorporacao" && (chamadasMap.get(m.id) || "").toUpperCase() === "M")
+    .filter((m) => m.group_type === "incorporacao" && (chamadasMap.get(m.id) || "") === "M")
     .map((m) => m.id);
 
   const desMesaIds = active
-    .filter((m) => m.group_type === "desenvolvimento" && (chamadasMap.get(m.id) || "").toUpperCase() === "M")
+    .filter((m) => m.group_type === "desenvolvimento" && (chamadasMap.get(m.id) || "") === "M")
     .map((m) => m.id);
 
   const psicoIds = active
-    .filter((m) => m.group_type === "dirigente" && (chamadasMap.get(m.id) || "").toUpperCase() === "PS")
+    .filter((m) => m.group_type === "dirigente" && (chamadasMap.get(m.id) || "") === "PS")
     .map((m) => m.id);
 
   const lastMesaDir = pickLastClicked(dirMesaIds, tsMesa);
@@ -439,13 +410,11 @@ async function persistRotacaoFromClicks() {
   const lastMesaDes = pickLastClicked(desMesaIds, tsMesa);
   let lastPsico = pickLastClicked(psicoIds, tsPsico);
 
-  /* Protecao: nao repetir o mesmo dirigente em Mesa e Psicografia */
   if (lastMesaDir && lastPsico && lastMesaDir === lastPsico) {
     const psList = eligiblePsicoDirigentes();
     lastPsico = computeNextSkip(psList, lastPsico, lastMesaDir)?.id || lastPsico;
   }
 
-  /* So atualiza se houve clique efetivo (isto evita “andar sozinho”) */
   if (lastMesaDir) await sbPatch(`rotacao?group_type=eq.mesa_dirigente`, { last_medium_id: lastMesaDir });
   if (lastMesaInc) await sbPatch(`rotacao?group_type=eq.mesa_incorporacao`, { last_medium_id: lastMesaInc });
   if (lastMesaDes) await sbPatch(`rotacao?group_type=eq.mesa_desenvolvimento`, { last_medium_id: lastMesaDes });
@@ -453,13 +422,9 @@ async function persistRotacaoFromClicks() {
 }
 
 async function onSalvarTudo() {
-  if (!currentDateISO) {
-    setErro("Selecione a data e clique em Verificar data.");
-    return;
-  }
+  if (!currentDateISO) return setErro("Selecione a data e clique em Verificar data.");
 
   try {
-    /* 1) Salvar chamadas */
     const active = mediumsAll.filter((m) => m.active === true);
     const rows = [];
 
@@ -469,17 +434,13 @@ async function onSalvarTudo() {
         rows.push({ medium_id: m.id, data: currentDateISO, status: st });
       }
     }
-
     if (rows.length) await sbUpsertChamadas(rows);
 
-    /* 2) Atualizar rotacao baseado no ULTIMO clique efetivo */
     await persistRotacaoFromClicks();
-
-    /* 3) Recarregar rotacao e redesenhar proximos */
     await loadRotacao();
     renderProximos();
 
-    setOk("Chamada salva e rotação atualizada pelo último clique (Mesa/PS).");
+    setOk("Chamada salva e rotação atualizada pela ordem correta da fila.");
   } catch (e) {
     setErro("Erro ao salvar: " + e.message);
   }
@@ -489,10 +450,7 @@ async function onSalvarTudo() {
 async function onVerificar() {
   setErro("");
   const iso = (dataChamada.value || "").trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
-    setErro("Data inválida.");
-    return;
-  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return setErro("Data inválida.");
   currentDateISO = iso;
   await loadChamadasForDate(iso);
   setOk(`Data carregada: ${iso}`);
@@ -510,7 +468,7 @@ function matchesFilter(m) {
 
 function renderParticipants() {
   listaParticipantes.innerHTML = "";
-  const filtered = mediumsAll.filter(matchesFilter).sort(byName);
+  const filtered = mediumsAll.filter(matchesFilter).sort(byQueue);
 
   if (!filtered.length) {
     const div = document.createElement("div");
@@ -526,7 +484,7 @@ function renderParticipants() {
     row.innerHTML = `
       <div class="itemLeft">
         <div class="itemName">${nameOf(m)}</div>
-        <div class="itemMeta">Grupo: ${m.group_type} | Ativo: ${m.active ? "Sim" : "Não"}</div>
+        <div class="itemMeta">Grupo: ${m.group_type} | Ativo: ${m.active ? "Sim" : "Não"} | Ordem: ${m.ordem_grupo ?? "-"} / ${m.sort_order ?? "-"}</div>
       </div>
       <div class="itemRight"></div>
     `;
@@ -551,10 +509,6 @@ async function onAdicionarParticipante() {
   if (!group_type) return pErr("Informe o grupo.");
 
   try {
-    /* Observacao: o seu schema real pode exigir mais colunas.
-       Aqui segue o minimo (id gerado pelo banco ou uuid default).
-       Se seu banco exigir 'name' e nao aceitar null, esta OK.
-    */
     await sbPost("mediums", [{
       name,
       group_type,
@@ -563,6 +517,8 @@ async function onAdicionarParticipante() {
       psicografia: novoPsico.checked ? 1 : 0,
       presencas: 0,
       faltas: 0,
+      ordem_grupo: null,
+      sort_order: null
     }], "return=minimal");
 
     pOk("Participante adicionado.");
@@ -582,10 +538,8 @@ function showTab(which) {
   const isChamada = which === "chamada";
   viewChamada.style.display = isChamada ? "" : "none";
   viewParticipantes.style.display = isChamada ? "none" : "";
-
   tabChamada.classList.toggle("active", isChamada);
   tabParticipantes.classList.toggle("active", !isChamada);
-
   if (!isChamada) renderParticipants();
 }
 
@@ -593,10 +547,7 @@ function showTab(which) {
 (async function init() {
   try {
     setConn(false, "Conectando...");
-
-    /* ping simples */
     await sbGet("rotacao?select=group_type,last_medium_id&limit=1");
-
     setConn(true, "Supabase OK");
 
     await loadMediums();
@@ -617,12 +568,8 @@ function showTab(which) {
   tabParticipantes.addEventListener("click", () => showTab("participantes"));
 
   btnRecarregarParticipantes.addEventListener("click", async () => {
-    try {
-      await reloadParticipants();
-      pOk("Recarregado.");
-    } catch (e) {
-      pErr("Erro ao recarregar: " + e.message);
-    }
+    try { await reloadParticipants(); pOk("Recarregado."); }
+    catch (e) { pErr("Erro ao recarregar: " + e.message); }
   });
 
   partFiltroGrupo.addEventListener("change", renderParticipants);
