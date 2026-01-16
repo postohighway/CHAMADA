@@ -1,10 +1,14 @@
 /* ============================================================
    CHAMADA DE MEDIUNS - app.js
-   Versao: 2026-01-15-c
-   FIX PRINCIPAL: ordem de fila por (ordem_grupo, sort_order, name)
+   Versao: 2026-01-15-d
+
+   FIX (d):
+   - Verificar data SEMPRE recarrega rotacao do banco antes de renderizar
+     => front passa a obedecer a tabela rotacao
+   - ordem de fila por (ordem_grupo, sort_order, name)
    ============================================================ */
 
-console.log("APP.JS CARREGADO: 2026-01-15-c");
+console.log("APP.JS CARREGADO: 2026-01-15-d");
 
 /* ====== SUPABASE ====== */
 const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co";
@@ -206,7 +210,6 @@ function pickLastClicked(ids, tsMap) {
 
 /* ====== LOAD ====== */
 async function loadMediums() {
-  // IMPORTANTISSIMO: trazer ordem_grupo e sort_order
   mediumsAll = await sbGet(
     "mediums?select=id,name,group_type,active,presencas,faltas,mesa,psicografia,ordem_grupo,sort_order"
   );
@@ -437,6 +440,8 @@ async function onSalvarTudo() {
     if (rows.length) await sbUpsertChamadas(rows);
 
     await persistRotacaoFromClicks();
+
+    // garante rotação atualizada + próximos recalculados
     await loadRotacao();
     renderProximos();
 
@@ -451,7 +456,12 @@ async function onVerificar() {
   setErro("");
   const iso = (dataChamada.value || "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return setErro("Data inválida.");
+
   currentDateISO = iso;
+
+  // FIX (d): recarrega a rotação direto do banco ANTES de renderizar
+  await loadRotacao();
+
   await loadChamadasForDate(iso);
   setOk(`Data carregada: ${iso}`);
   renderChamada();
