@@ -1,14 +1,11 @@
 /* ============================================================
    CHAMADA DE MEDIUNS - app.js
-   Versao: 2026-01-15-d
-
-   FIX (d):
-   - Verificar data SEMPRE recarrega rotacao do banco antes de renderizar
-     => front passa a obedecer a tabela rotacao
-   - ordem de fila por (ordem_grupo, sort_order, name)
+   Versao: 2026-01-15-e
+   FIX PRINCIPAL: ordem de fila por (ordem_grupo, sort_order, name)
+   + Destaque visual: próximo MESA (amarelo) e próximo PSICO (vermelho)
    ============================================================ */
 
-console.log("APP.JS CARREGADO: 2026-01-15-d");
+console.log("APP.JS CARREGADO: 2026-01-15-e");
 
 /* ====== SUPABASE ====== */
 const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co";
@@ -138,6 +135,12 @@ let chamadasMap = new Map();
 const tsMesa = new Map();
 const tsPsico = new Map();
 
+/* ids “próximos” para destaque visual */
+let nextMesaDirId = null;
+let nextMesaIncId = null;
+let nextMesaDesId = null;
+let nextPsicoId = null;
+
 /* ====== UI helpers ====== */
 function setOk(msg = "") { msgTopo.textContent = msg; msgErro.textContent = ""; }
 function setErro(msg = "") { msgErro.textContent = msg; }
@@ -242,7 +245,7 @@ async function loadChamadasForDate(iso) {
 }
 
 /* ====== PROXIMOS ====== */
-function renderProximos() {
+function calcProximos() {
   const dir = eligible("dirigente");
   const inc = eligible("incorporacao");
   const des = eligible("desenvolvimento");
@@ -254,10 +257,19 @@ function renderProximos() {
 
   const nextPsico = computeNextSkip(ps, rotacao.psicografia, nextMesaDir ? nextMesaDir.id : null);
 
+  nextMesaDirId = nextMesaDir ? nextMesaDir.id : null;
+  nextMesaIncId = nextMesaInc ? nextMesaInc.id : null;
+  nextMesaDesId = nextMesaDes ? nextMesaDes.id : null;
+  nextPsicoId   = nextPsico ? nextPsico.id : null;
+
   nextMesaDirigenteName.textContent = nextMesaDir ? nameOf(nextMesaDir) : "—";
   nextMesaIncorpName.textContent    = nextMesaInc ? nameOf(nextMesaInc) : "—";
   nextMesaDesenvName.textContent    = nextMesaDes ? nameOf(nextMesaDes) : "—";
   nextPsicoDirigenteName.textContent= nextPsico ? nameOf(nextPsico) : "—";
+}
+
+function renderProximos() {
+  calcProximos();
 }
 
 /* ====== RESUMO ====== */
@@ -293,6 +305,22 @@ function buildStatusOptions(m) {
 function makeRow(m) {
   const wrap = document.createElement("div");
   wrap.className = "itemRow";
+
+  /* ===== DESTAQUE VISUAL ===== */
+  // amarelo: próximo da mesa conforme o grupo
+  if (m.group_type === "dirigente" && nextMesaDirId && m.id === nextMesaDirId) {
+    wrap.classList.add("is-next-mesa");
+  }
+  if (m.group_type === "incorporacao" && nextMesaIncId && m.id === nextMesaIncId) {
+    wrap.classList.add("is-next-mesa");
+  }
+  if (m.group_type === "desenvolvimento" && nextMesaDesId && m.id === nextMesaDesId) {
+    wrap.classList.add("is-next-mesa");
+  }
+  // vermelho: próximo da psicografia (somente dirigentes)
+  if (m.group_type === "dirigente" && nextPsicoId && m.id === nextPsicoId) {
+    wrap.classList.add("is-next-psico");
+  }
 
   const left = document.createElement("div");
   left.className = "itemLeft";
@@ -369,6 +397,9 @@ function makeRow(m) {
 }
 
 function renderChamada() {
+  // recalcula “próximos” antes de desenhar linhas para aplicar destaque
+  calcProximos();
+
   listaDirigentes.innerHTML = "";
   listaIncorporacao.innerHTML = "";
   listaDesenvolvimento.innerHTML = "";
@@ -385,7 +416,6 @@ function renderChamada() {
   for (const m of car) listaCarencia.appendChild(makeRow(m));
 
   renderResumo();
-  renderProximos();
 }
 
 /* ====== SALVAR ====== */
@@ -440,12 +470,9 @@ async function onSalvarTudo() {
     if (rows.length) await sbUpsertChamadas(rows);
 
     await persistRotacaoFromClicks();
-
-    // garante rotação atualizada + próximos recalculados
     await loadRotacao();
-    renderProximos();
-
-    setOk("Chamada salva e rotação atualizada pela ordem correta da fila.");
+    renderChamada(); // redesenha para atualizar destaque
+    setOk("Chamada salva e rotação atualizada. (destaques ativados)");
   } catch (e) {
     setErro("Erro ao salvar: " + e.message);
   }
@@ -456,11 +483,7 @@ async function onVerificar() {
   setErro("");
   const iso = (dataChamada.value || "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return setErro("Data inválida.");
-
   currentDateISO = iso;
-
-  // FIX (d): recarrega a rotação direto do banco ANTES de renderizar
-  await loadRotacao();
 
   await loadChamadasForDate(iso);
   setOk(`Data carregada: ${iso}`);
