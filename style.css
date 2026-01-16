@@ -196,3 +196,35 @@ body{
   background: rgba(255,255,255,.10);
   margin: 18px 0;
 }
+
+/* ===== Destaques de próximos (fila) ===== */
+.itemRow.is-next-mesa {
+  outline: 2px solid rgba(255, 204, 0, 0.65);
+  box-shadow: 0 0 0 4px rgba(255, 204, 0, 0.12);
+}
+
+.itemRow.is-next-mesa .itemName {
+  font-weight: 800;
+}
+
+.itemRow.is-next-psico {
+  outline: 2px solid rgba(255, 80, 80, 0.70);
+  box-shadow: 0 0 0 4px rgba(255, 80, 80, 0.14);
+}
+
+.itemRow.is-next-psico .itemName {
+  font-weight: 800;
+}
+
+/* opcional: destacar também a caixinha dos rádios */
+.itemRow.is-next-mesa .radioGroup {
+  background: rgba(255, 204, 0, 0.08);
+  border-radius: 999px;
+  padding: 6px;
+}
+
+.itemRow.is-next-psico .radioGroup {
+  background: rgba(255, 80, 80, 0.08);
+  border-radius: 999px;
+  padding: 6px;
+}
