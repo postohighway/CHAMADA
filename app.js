@@ -1,26 +1,14 @@
 /* ============================================================
    CHAMADA DE MEDIUNS - app.js
-   Versao: 2026-01-15-f
+   Versao: 2026-01-15-d
    FIXES:
-   1) Rotação determinística: se não houver timestamp, escolhe "último" pela fila (ordem_grupo, sort_order, name)
-   2) Validações antes de salvar:
-        Dirigente Mesa (M): exatamente 1
-        Dirigente Psicografia (PS): exatamente 1
-        Não pode o mesmo dirigente ser M e PS
-        Incorporação Mesa (M): exatamente 4
-        Desenvolvimento Mesa (M): exatamente 4
-   3) TRAVA HISTÓRICO:
-        Só atualiza rotacao quando a data salva for a ÚLTIMA data válida do banco (max(data) com M/PS).
-   4) PRÉ-RESERVA AUTOMÁTICA:
-        Ao "Verificar data", se não houver chamada salva, o sistema pré-seleciona:
-          - 1 Dirigente M (próximo da rotação)
-          - 1 Dirigente PS (próximo da rotação, evitando o M)
-          - 4 Incorporação M (próximos da rotação)
-          - 4 Desenvolvimento M (próximos da rotação)
-        Assim "Reservas da mesa (M)" aparece no dia novo.
+   (1) Resumo % baseado em TODOS os ativos (não só marcados)
+   (2) Rotação: se não houve clique (ts vazio), usa "último da fila" por ordem_grupo/sort_order
+   (3) Destaques (classes) para "próximo da mesa" e "próximo da psicografia"
+   (4) Mensagem correta: "nenhuma chamada salva ainda" quando não existir registro no banco para a data
    ============================================================ */
 
-console.log("APP.JS CARREGADO: 2026-01-15-f");
+console.log("APP.JS CARREGADO: 2026-01-15-d");
 
 /* ====== SUPABASE ====== */
 const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co";
@@ -65,6 +53,7 @@ async function sbPatch(path, body, prefer = "return=minimal") {
   return t ? JSON.parse(t) : [];
 }
 
+/* Upsert de chamadas por conflito medium_id,data (precisa unique no banco) */
 async function sbUpsertChamadas(rows) {
   const r = await fetch(`${SUPABASE_URL}/rest/v1/chamadas?on_conflict=medium_id,data`, {
     method: "POST",
@@ -142,11 +131,16 @@ let rotacao = {
   psicografia: null,
 };
 let currentDateISO = null;
+
 let chamadasMap = new Map();
+let dateHasSavedCall = false;
 
 /* timestamps de clique: last-click wins */
 const tsMesa = new Map();
 const tsPsico = new Map();
+
+/* refs das linhas para highlight */
+const rowById = new Map();
 
 /* ====== UI helpers ====== */
 function setOk(msg = "") { msgTopo.textContent = msg; msgErro.textContent = ""; }
@@ -162,6 +156,7 @@ function numOrInf(v) {
   return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
 }
 
+/* ORDENACAO CORRETA: fila por ordem_grupo / sort_order / nome */
 function byQueue(a, b) {
   const ag = numOrInf(a.ordem_grupo);
   const bg = numOrInf(b.ordem_grupo);
@@ -181,10 +176,12 @@ function eligible(group_type) {
     .sort(byQueue);
 }
 
+/* regra: todo dirigente pode psicografar */
 function eligiblePsicoDirigentes() {
   return eligible("dirigente");
 }
 
+/* ====== ROTACAO ====== */
 function computeNext(list, lastId) {
   if (!list.length) return null;
   if (!lastId) return list[0];
@@ -201,33 +198,10 @@ function computeNextSkip(list, lastId, skipId) {
   return n;
 }
 
-/* pega N próximos a partir do lastId (circular) */
-function computeNextN(list, lastId, n) {
-  const out = [];
-  if (!list.length || n <= 0) return out;
-  let cur = computeNext(list, lastId);
-  if (!cur) return out;
-  out.push(cur);
-  while (out.length < n) {
-    cur = computeNext(list, cur.id);
-    if (!cur) break;
-    out.push(cur);
-    if (out.length > list.length) break; // segurança
-  }
-  return out.slice(0, Math.min(n, list.length));
-}
-
-/* --- FIX: se não houver timestamps, escolhe o "último" pela fila --- */
-function lastByQueue(ids) {
-  const map = new Map(mediumsAll.map((m) => [m.id, m]));
-  const arr = ids.map((id) => map.get(id)).filter(Boolean).sort(byQueue);
-  return arr.length ? arr[arr.length - 1].id : null;
-}
-
+/* 1) Se houver timestamps, pega o último clicado */
 function pickLastClicked(ids, tsMap) {
   let bestId = null;
   let bestTs = -1;
-
   for (const id of ids) {
     const ts = tsMap.get(id);
     if (typeof ts === "number" && ts > bestTs) {
@@ -235,8 +209,24 @@ function pickLastClicked(ids, tsMap) {
       bestId = id;
     }
   }
+  return bestId;
+}
 
-  if (!bestId && ids.length) bestId = lastByQueue(ids);
+/* 2) Se NÃO houver timestamps (carregado do banco), pega o "último da fila" (maior índice na lista ordenada) */
+function pickLastByQueue(ids, listOrdered) {
+  if (!ids.length) return null;
+  const pos = new Map();
+  listOrdered.forEach((m, i) => pos.set(m.id, i));
+  let bestId = ids[0];
+  let bestPos = pos.has(bestId) ? pos.get(bestId) : -1;
+
+  for (const id of ids) {
+    const p = pos.has(id) ? pos.get(id) : -1;
+    if (p > bestPos) {
+      bestPos = p;
+      bestId = id;
+    }
+  }
   return bestId;
 }
 
@@ -266,50 +256,41 @@ async function loadChamadasForDate(iso) {
   chamadasMap = new Map();
   tsMesa.clear();
   tsPsico.clear();
+  dateHasSavedCall = false;
 
   const rows = await sbGet(`chamadas?select=medium_id,status&data=eq.${iso}`);
+  if (rows && rows.length) dateHasSavedCall = true;
+
   for (const r of rows) {
     chamadasMap.set(r.medium_id, (r.status || "").toUpperCase());
   }
 }
 
-/* ====== ÚLTIMA DATA VÁLIDA (para permitir mexer na rotação) ====== */
-async function getUltimaDataValida() {
-  const rows = await sbGet(`chamadas?select=data&status=in.(M,PS)&order=data.desc&limit=1`);
-  return rows && rows.length ? rows[0].data : null;
+/* ====== PROXIMOS + HIGHLIGHT ====== */
+function clearHighlights() {
+  for (const el of rowById.values()) {
+    el.classList.remove("nextMesa");
+    el.classList.remove("nextPsico");
+  }
 }
 
-/* ====== PRÉ-RESERVA AUTOMÁTICA (quando não existe chamada salva) ====== */
-function applyPreReservaIfEmpty() {
-  if (chamadasMap.size !== 0) return; // já existe chamada salva
+function applyHighlights(nextMesaDir, nextMesaInc, nextMesaDes, nextPsico) {
+  clearHighlights();
 
-  const dir = eligible("dirigente");
-  const inc = eligible("incorporacao");
-  const des = eligible("desenvolvimento");
-  const ps  = eligiblePsicoDirigentes();
+  if (nextMesaDir?.id && rowById.has(nextMesaDir.id)) rowById.get(nextMesaDir.id).classList.add("nextMesa");
+  if (nextMesaInc?.id && rowById.has(nextMesaInc.id)) rowById.get(nextMesaInc.id).classList.add("nextMesa");
+  if (nextMesaDes?.id && rowById.has(nextMesaDes.id)) rowById.get(nextMesaDes.id).classList.add("nextMesa");
 
-  const nextMesaDir = computeNext(dir, rotacao.mesa_dirigente);
-  const nextPsico   = computeNextSkip(ps, rotacao.psicografia, nextMesaDir ? nextMesaDir.id : null);
-
-  const nextInc4 = computeNextN(inc, rotacao.mesa_incorporacao, 4);
-  const nextDes4 = computeNextN(des, rotacao.mesa_desenvolvimento, 4);
-
-  // Marcações mínimas
-  if (nextMesaDir) chamadasMap.set(nextMesaDir.id, "M");
-  if (nextPsico)   chamadasMap.set(nextPsico.id, "PS");
-
-  for (const m of nextInc4) chamadasMap.set(m.id, "M");
-  for (const m of nextDes4) chamadasMap.set(m.id, "M");
-
-  // Marca "cliques" com timestamps para ficar estável
-  const now = Date.now();
-  if (nextMesaDir) tsMesa.set(nextMesaDir.id, now);
-  for (const m of nextInc4) tsMesa.set(m.id, now);
-  for (const m of nextDes4) tsMesa.set(m.id, now);
-  if (nextPsico) tsPsico.set(nextPsico.id, now);
+  if (nextPsico?.id && rowById.has(nextPsico.id)) rowById.get(nextPsico.id).classList.add("nextPsico");
 }
 
-/* ====== PROXIMOS ====== */
+/*
+  OBS: essas classes dependem do CSS.
+  Se no seu style.css antigo era:
+    .nextMesa { border: 2px solid #f1c40f; }   // amarelo
+    .nextPsico{ border: 2px solid #e74c3c; }   // vermelho
+  mantenha/recupere isso lá.
+*/
 function renderProximos() {
   const dir = eligible("dirigente");
   const inc = eligible("incorporacao");
@@ -319,16 +300,20 @@ function renderProximos() {
   const nextMesaDir = computeNext(dir, rotacao.mesa_dirigente);
   const nextMesaInc = computeNext(inc, rotacao.mesa_incorporacao);
   const nextMesaDes = computeNext(des, rotacao.mesa_desenvolvimento);
-  const nextPsico = computeNextSkip(ps, rotacao.psicografia, nextMesaDir ? nextMesaDir.id : null);
+  const nextPsico   = computeNextSkip(ps, rotacao.psicografia, nextMesaDir ? nextMesaDir.id : null);
 
   nextMesaDirigenteName.textContent = nextMesaDir ? nameOf(nextMesaDir) : "—";
   nextMesaIncorpName.textContent    = nextMesaInc ? nameOf(nextMesaInc) : "—";
   nextMesaDesenvName.textContent    = nextMesaDes ? nameOf(nextMesaDes) : "—";
   nextPsicoDirigenteName.textContent= nextPsico ? nameOf(nextPsico) : "—";
+
+  applyHighlights(nextMesaDir, nextMesaInc, nextMesaDes, nextPsico);
 }
 
+/* ====== RESUMO ====== */
 function renderResumo() {
   const active = mediumsAll.filter((m) => m.active === true);
+
   let p = 0, m = 0, f = 0, ps = 0;
   const mesa = [];
 
@@ -340,14 +325,16 @@ function renderResumo() {
     if (st === "PS") ps++;
   }
 
-  const total = p + m + f;
-  const presPct = total ? Math.round(((p + m) / total) * 100) : 0;
-  const faltPct = total ? Math.round((f / total) * 100) : 0;
+  /* FIX: % calculado em cima de TODOS os ativos */
+  const totalAtivos = active.length;
+  const presPct = totalAtivos ? Math.round(((p + m) / totalAtivos) * 100) : 0;
+  const faltPct = totalAtivos ? Math.round((f / totalAtivos) * 100) : 0;
 
   resumoGeral.textContent = `P:${p} M:${m} F:${f} PS:${ps} | Presença:${presPct}% | Faltas:${faltPct}%`;
   reservasMesa.textContent = mesa.length ? mesa.join(", ") : "—";
 }
 
+/* ====== LISTA / RADIOS ====== */
 function buildStatusOptions(m) {
   const base = ["P", "M", "F"];
   if (m.group_type === "dirigente") base.push("PS");
@@ -357,6 +344,10 @@ function buildStatusOptions(m) {
 function makeRow(m) {
   const wrap = document.createElement("div");
   wrap.className = "itemRow";
+  wrap.dataset.mid = m.id;
+  wrap.dataset.group = m.group_type;
+
+  rowById.set(m.id, wrap);
 
   const left = document.createElement("div");
   left.className = "itemLeft";
@@ -414,12 +405,15 @@ function makeRow(m) {
         setErro("Selecione a data e clique em Verificar data.");
         return;
       }
+
       chamadasMap.set(m.id, s);
 
+      /* timestamp só para interações ao vivo */
       if (s === "M") tsMesa.set(m.id, Date.now()); else tsMesa.delete(m.id);
       if (s === "PS") tsPsico.set(m.id, Date.now()); else tsPsico.delete(m.id);
 
       renderResumo();
+      renderProximos();
     });
 
     radios.appendChild(inp);
@@ -437,6 +431,7 @@ function renderChamada() {
   listaIncorporacao.innerHTML = "";
   listaDesenvolvimento.innerHTML = "";
   listaCarencia.innerHTML = "";
+  rowById.clear();
 
   const dir = eligible("dirigente");
   const inc = eligible("incorporacao");
@@ -452,43 +447,46 @@ function renderChamada() {
   renderProximos();
 }
 
-/* ====== VALIDACOES ====== */
-function collectIds(group, status) {
-  return mediumsAll
-    .filter((m) => m.active === true && m.group_type === group && (chamadasMap.get(m.id) || "") === status)
+/* ====== ROTACAO: persistência robusta ====== */
+async function persistRotacaoFromCurrentMap() {
+  const active = mediumsAll.filter((m) => m.active === true);
+
+  const dirList = eligible("dirigente");
+  const incList = eligible("incorporacao");
+  const desList = eligible("desenvolvimento");
+  const psList  = eligiblePsicoDirigentes();
+
+  const dirMesaIds = active
+    .filter((m) => m.group_type === "dirigente" && (chamadasMap.get(m.id) || "") === "M")
     .map((m) => m.id);
-}
 
-function validateBeforeSave() {
-  const dirMesaIds = collectIds("dirigente", "M");
-  const dirPsIds   = collectIds("dirigente", "PS");
+  const incMesaIds = active
+    .filter((m) => m.group_type === "incorporacao" && (chamadasMap.get(m.id) || "") === "M")
+    .map((m) => m.id);
 
-  const incMesaIds = collectIds("incorporacao", "M");
-  const desMesaIds = collectIds("desenvolvimento", "M");
+  const desMesaIds = active
+    .filter((m) => m.group_type === "desenvolvimento" && (chamadasMap.get(m.id) || "") === "M")
+    .map((m) => m.id);
 
-  if (dirMesaIds.length !== 1) return `Dirigente na MESA: encontrado ${dirMesaIds.length}, esperado 1. Corrija antes de salvar.`;
-  if (dirPsIds.length !== 1)   return `Dirigente na PSICOGRAFIA (PS): encontrado ${dirPsIds.length}, esperado 1. Corrija antes de salvar.`;
-  if (dirMesaIds[0] === dirPsIds[0]) return `Erro: o mesmo dirigente não pode ser Mesa (M) e Psicografia (PS) no mesmo dia.`;
-  if (incMesaIds.length !== 4) return `Incorporação na MESA (M): encontrado ${incMesaIds.length}, esperado 4. Corrija antes de salvar.`;
-  if (desMesaIds.length !== 4) return `Desenvolvimento na MESA (M): encontrado ${desMesaIds.length}, esperado 4. Corrija antes de salvar.`;
+  const psicoIds = active
+    .filter((m) => m.group_type === "dirigente" && (chamadasMap.get(m.id) || "") === "PS")
+    .map((m) => m.id);
 
-  return null;
-}
+  /* Se houver clique, respeita clique; senão usa "último da fila" */
+  const lastMesaDir =
+    pickLastClicked(dirMesaIds, tsMesa) ?? pickLastByQueue(dirMesaIds, dirList);
 
-/* ====== ROTACAO ====== */
-async function persistRotacaoDeterministica() {
-  const dirMesaIds = collectIds("dirigente", "M");
-  const incMesaIds = collectIds("incorporacao", "M");
-  const desMesaIds = collectIds("desenvolvimento", "M");
-  const psicoIds   = collectIds("dirigente", "PS");
+  const lastMesaInc =
+    pickLastClicked(incMesaIds, tsMesa) ?? pickLastByQueue(incMesaIds, incList);
 
-  const lastMesaDir = pickLastClicked(dirMesaIds, tsMesa);
-  const lastMesaInc = pickLastClicked(incMesaIds, tsMesa);
-  const lastMesaDes = pickLastClicked(desMesaIds, tsMesa);
-  let lastPsico = pickLastClicked(psicoIds, tsPsico);
+  const lastMesaDes =
+    pickLastClicked(desMesaIds, tsMesa) ?? pickLastByQueue(desMesaIds, desList);
 
+  let lastPsico =
+    pickLastClicked(psicoIds, tsPsico) ?? pickLastByQueue(psicoIds, psList);
+
+  /* regra: não deixa o mesmo dirigente ser mesa e psicografia na rotação */
   if (lastMesaDir && lastPsico && lastMesaDir === lastPsico) {
-    const psList = eligiblePsicoDirigentes();
     lastPsico = computeNextSkip(psList, lastPsico, lastMesaDir)?.id || lastPsico;
   }
 
@@ -503,9 +501,6 @@ async function onSalvarTudo() {
   if (!currentDateISO) return setErro("Selecione a data e clique em Verificar data.");
 
   try {
-    const msg = validateBeforeSave();
-    if (msg) return setErro(msg);
-
     const active = mediumsAll.filter((m) => m.active === true);
     const rows = [];
 
@@ -515,26 +510,48 @@ async function onSalvarTudo() {
         rows.push({ medium_id: m.id, data: currentDateISO, status: st });
       }
     }
-    if (rows.length) await sbUpsertChamadas(rows);
 
-    // TRAVA HISTÓRICO: só atualiza rotação se for a última data válida
-    const ultimaValida = await getUltimaDataValida();
-    const podeAtualizar = !!ultimaValida && currentDateISO === ultimaValida;
-
-    if (podeAtualizar) {
-      await persistRotacaoDeterministica();
-      await loadRotacao();
-      renderProximos();
-      setOk(`Chamada salva. Rotação atualizada (data mais recente: ${ultimaValida}).`);
-    } else {
-      await loadRotacao();
-      renderProximos();
-      setOk(`Chamada salva (HISTÓRICO). Rotação NÃO foi alterada. Última data válida no banco: ${ultimaValida ?? "—"}.`);
+    if (rows.length) {
+      await sbUpsertChamadas(rows);
+      dateHasSavedCall = true;
     }
 
+    await persistRotacaoFromCurrentMap();
+    await loadRotacao();
+    renderProximos();
+
+    setOk("Chamada salva e rotação atualizada.");
   } catch (e) {
     setErro("Erro ao salvar: " + e.message);
   }
+}
+
+/* ====== PRE-RESERVA (opcional): aplica M/PS dos próximos sem salvar ======
+   Se você NÃO quiser mais isso, basta não chamar applyPreReserva() no onVerificar.
+*/
+function applyPreReservaIfEmpty() {
+  // só aplica se NÃO houver chamada salva e não houver nada marcado ainda
+  if (dateHasSavedCall) return;
+
+  const anyMarked = Array.from(chamadasMap.values()).some((st) =>
+    ["P", "M", "F", "PS"].includes((st || "").toUpperCase())
+  );
+  if (anyMarked) return;
+
+  const dir = eligible("dirigente");
+  const inc = eligible("incorporacao");
+  const des = eligible("desenvolvimento");
+  const ps  = eligiblePsicoDirigentes();
+
+  const nextMesaDir = computeNext(dir, rotacao.mesa_dirigente);
+  const nextMesaInc = computeNext(inc, rotacao.mesa_incorporacao);
+  const nextMesaDes = computeNext(des, rotacao.mesa_desenvolvimento);
+  const nextPsico   = computeNextSkip(ps, rotacao.psicografia, nextMesaDir ? nextMesaDir.id : null);
+
+  if (nextMesaDir) chamadasMap.set(nextMesaDir.id, "M");
+  if (nextMesaInc) chamadasMap.set(nextMesaInc.id, "M");
+  if (nextMesaDes) chamadasMap.set(nextMesaDes.id, "M");
+  if (nextPsico)   chamadasMap.set(nextPsico.id, "PS");
 }
 
 /* ====== VERIFICAR DATA ====== */
@@ -544,19 +561,15 @@ async function onVerificar() {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return setErro("Data inválida.");
 
   currentDateISO = iso;
-  await loadRotacao();
   await loadChamadasForDate(iso);
 
-  const qtdAntes = chamadasMap.size;
-  applyPreReservaIfEmpty(); // <<< AQUI: pré-reserva automática
-  const qtdDepois = chamadasMap.size;
+  // aplica pré-reserva só se estiver vazio e não houver chamada salva
+  applyPreReservaIfEmpty();
 
-  if (qtdAntes === 0 && qtdDepois > 0) {
-    setOk(`Data carregada: ${iso} (pré-reserva aplicada — ainda não está salva)`);
-  } else if (qtdDepois === 0) {
-    setOk(`Data carregada: ${iso} (nenhuma chamada salva ainda)`);
+  if (dateHasSavedCall) {
+    setOk(`Data carregada: ${iso}`);
   } else {
-    setOk(`Data carregada: ${iso} (${qtdDepois} marcações)`);
+    setOk(`Data carregada: ${iso} (nenhuma chamada salva ainda)`);
   }
 
   renderChamada();
