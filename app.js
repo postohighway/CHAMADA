@@ -1,6 +1,6 @@
 /* ============================================================
    CHAMADA DE MEDIUNS - app.js
-   Versao: 2026-01-15-e
+   Versao: 2026-01-15-f
    FIXES:
    1) Rotação determinística: se não houver timestamp, escolhe "último" pela fila (ordem_grupo, sort_order, name)
    2) Validações antes de salvar:
@@ -11,9 +11,16 @@
         Desenvolvimento Mesa (M): exatamente 4
    3) TRAVA HISTÓRICO:
         Só atualiza rotacao quando a data salva for a ÚLTIMA data válida do banco (max(data) com M/PS).
+   4) PRÉ-RESERVA AUTOMÁTICA:
+        Ao "Verificar data", se não houver chamada salva, o sistema pré-seleciona:
+          - 1 Dirigente M (próximo da rotação)
+          - 1 Dirigente PS (próximo da rotação, evitando o M)
+          - 4 Incorporação M (próximos da rotação)
+          - 4 Desenvolvimento M (próximos da rotação)
+        Assim "Reservas da mesa (M)" aparece no dia novo.
    ============================================================ */
 
-console.log("APP.JS CARREGADO: 2026-01-15-e");
+console.log("APP.JS CARREGADO: 2026-01-15-f");
 
 /* ====== SUPABASE ====== */
 const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co";
@@ -194,6 +201,22 @@ function computeNextSkip(list, lastId, skipId) {
   return n;
 }
 
+/* pega N próximos a partir do lastId (circular) */
+function computeNextN(list, lastId, n) {
+  const out = [];
+  if (!list.length || n <= 0) return out;
+  let cur = computeNext(list, lastId);
+  if (!cur) return out;
+  out.push(cur);
+  while (out.length < n) {
+    cur = computeNext(list, cur.id);
+    if (!cur) break;
+    out.push(cur);
+    if (out.length > list.length) break; // segurança
+  }
+  return out.slice(0, Math.min(n, list.length));
+}
+
 /* --- FIX: se não houver timestamps, escolhe o "último" pela fila --- */
 function lastByQueue(ids) {
   const map = new Map(mediumsAll.map((m) => [m.id, m]));
@@ -254,6 +277,36 @@ async function loadChamadasForDate(iso) {
 async function getUltimaDataValida() {
   const rows = await sbGet(`chamadas?select=data&status=in.(M,PS)&order=data.desc&limit=1`);
   return rows && rows.length ? rows[0].data : null;
+}
+
+/* ====== PRÉ-RESERVA AUTOMÁTICA (quando não existe chamada salva) ====== */
+function applyPreReservaIfEmpty() {
+  if (chamadasMap.size !== 0) return; // já existe chamada salva
+
+  const dir = eligible("dirigente");
+  const inc = eligible("incorporacao");
+  const des = eligible("desenvolvimento");
+  const ps  = eligiblePsicoDirigentes();
+
+  const nextMesaDir = computeNext(dir, rotacao.mesa_dirigente);
+  const nextPsico   = computeNextSkip(ps, rotacao.psicografia, nextMesaDir ? nextMesaDir.id : null);
+
+  const nextInc4 = computeNextN(inc, rotacao.mesa_incorporacao, 4);
+  const nextDes4 = computeNextN(des, rotacao.mesa_desenvolvimento, 4);
+
+  // Marcações mínimas
+  if (nextMesaDir) chamadasMap.set(nextMesaDir.id, "M");
+  if (nextPsico)   chamadasMap.set(nextPsico.id, "PS");
+
+  for (const m of nextInc4) chamadasMap.set(m.id, "M");
+  for (const m of nextDes4) chamadasMap.set(m.id, "M");
+
+  // Marca "cliques" com timestamps para ficar estável
+  const now = Date.now();
+  if (nextMesaDir) tsMesa.set(nextMesaDir.id, now);
+  for (const m of nextInc4) tsMesa.set(m.id, now);
+  for (const m of nextDes4) tsMesa.set(m.id, now);
+  if (nextPsico) tsPsico.set(nextPsico.id, now);
 }
 
 /* ====== PROXIMOS ====== */
@@ -494,8 +547,17 @@ async function onVerificar() {
   await loadRotacao();
   await loadChamadasForDate(iso);
 
-  const qtd = chamadasMap.size;
-  setOk(qtd === 0 ? `Data carregada: ${iso} (nenhuma chamada salva ainda)` : `Data carregada: ${iso} (${qtd} marcações)`);
+  const qtdAntes = chamadasMap.size;
+  applyPreReservaIfEmpty(); // <<< AQUI: pré-reserva automática
+  const qtdDepois = chamadasMap.size;
+
+  if (qtdAntes === 0 && qtdDepois > 0) {
+    setOk(`Data carregada: ${iso} (pré-reserva aplicada — ainda não está salva)`);
+  } else if (qtdDepois === 0) {
+    setOk(`Data carregada: ${iso} (nenhuma chamada salva ainda)`);
+  } else {
+    setOk(`Data carregada: ${iso} (${qtdDepois} marcações)`);
+  }
 
   renderChamada();
 }
