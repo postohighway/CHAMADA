@@ -1,11 +1,17 @@
 /* ============================================================
    CHAMADA DE MEDIUNS - app.js
-   Versao: 2026-01-15-e
-   FIX PRINCIPAL: ordem de fila por (ordem_grupo, sort_order, name)
-   + Destaque visual: próximo MESA (amarelo) e próximo PSICO (vermelho)
+   Versao: 2026-01-15-d
+   FIX PRINCIPAL:
+   - Rotação determinística: se não houver timestamp, escolhe "último" pela fila (ordem_grupo, sort_order, name)
+   - Validações antes de salvar:
+       Dirigente Mesa (M): exatamente 1
+       Dirigente Psicografia (PS): exatamente 1
+       Não pode o mesmo dirigente ser M e PS
+       Incorporação Mesa (M): exatamente 4
+       Desenvolvimento Mesa (M): exatamente 4
    ============================================================ */
 
-console.log("APP.JS CARREGADO: 2026-01-15-e");
+console.log("APP.JS CARREGADO: 2026-01-15-d");
 
 /* ====== SUPABASE ====== */
 const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co";
@@ -135,12 +141,6 @@ let chamadasMap = new Map();
 const tsMesa = new Map();
 const tsPsico = new Map();
 
-/* ids “próximos” para destaque visual */
-let nextMesaDirId = null;
-let nextMesaIncId = null;
-let nextMesaDesId = null;
-let nextPsicoId = null;
-
 /* ====== UI helpers ====== */
 function setOk(msg = "") { msgTopo.textContent = msg; msgErro.textContent = ""; }
 function setErro(msg = "") { msgErro.textContent = msg; }
@@ -197,9 +197,17 @@ function computeNextSkip(list, lastId, skipId) {
   return n;
 }
 
+/* --- FIX: se não houver timestamps, escolhe o "último" pela fila --- */
+function lastByQueue(ids) {
+  const map = new Map(mediumsAll.map((m) => [m.id, m]));
+  const arr = ids.map((id) => map.get(id)).filter(Boolean).sort(byQueue);
+  return arr.length ? arr[arr.length - 1].id : null;
+}
+
 function pickLastClicked(ids, tsMap) {
   let bestId = null;
   let bestTs = -1;
+
   for (const id of ids) {
     const ts = tsMap.get(id);
     if (typeof ts === "number" && ts > bestTs) {
@@ -207,7 +215,10 @@ function pickLastClicked(ids, tsMap) {
       bestId = id;
     }
   }
-  if (!bestId && ids.length) bestId = ids[ids.length - 1];
+
+  // Sem clique (carregado do banco): pega determinístico pelo fim da fila
+  if (!bestId && ids.length) bestId = lastByQueue(ids);
+
   return bestId;
 }
 
@@ -245,7 +256,7 @@ async function loadChamadasForDate(iso) {
 }
 
 /* ====== PROXIMOS ====== */
-function calcProximos() {
+function renderProximos() {
   const dir = eligible("dirigente");
   const inc = eligible("incorporacao");
   const des = eligible("desenvolvimento");
@@ -257,19 +268,10 @@ function calcProximos() {
 
   const nextPsico = computeNextSkip(ps, rotacao.psicografia, nextMesaDir ? nextMesaDir.id : null);
 
-  nextMesaDirId = nextMesaDir ? nextMesaDir.id : null;
-  nextMesaIncId = nextMesaInc ? nextMesaInc.id : null;
-  nextMesaDesId = nextMesaDes ? nextMesaDes.id : null;
-  nextPsicoId   = nextPsico ? nextPsico.id : null;
-
   nextMesaDirigenteName.textContent = nextMesaDir ? nameOf(nextMesaDir) : "—";
   nextMesaIncorpName.textContent    = nextMesaInc ? nameOf(nextMesaInc) : "—";
   nextMesaDesenvName.textContent    = nextMesaDes ? nameOf(nextMesaDes) : "—";
   nextPsicoDirigenteName.textContent= nextPsico ? nameOf(nextPsico) : "—";
-}
-
-function renderProximos() {
-  calcProximos();
 }
 
 /* ====== RESUMO ====== */
@@ -305,22 +307,6 @@ function buildStatusOptions(m) {
 function makeRow(m) {
   const wrap = document.createElement("div");
   wrap.className = "itemRow";
-
-  /* ===== DESTAQUE VISUAL ===== */
-  // amarelo: próximo da mesa conforme o grupo
-  if (m.group_type === "dirigente" && nextMesaDirId && m.id === nextMesaDirId) {
-    wrap.classList.add("is-next-mesa");
-  }
-  if (m.group_type === "incorporacao" && nextMesaIncId && m.id === nextMesaIncId) {
-    wrap.classList.add("is-next-mesa");
-  }
-  if (m.group_type === "desenvolvimento" && nextMesaDesId && m.id === nextMesaDesId) {
-    wrap.classList.add("is-next-mesa");
-  }
-  // vermelho: próximo da psicografia (somente dirigentes)
-  if (m.group_type === "dirigente" && nextPsicoId && m.id === nextPsicoId) {
-    wrap.classList.add("is-next-psico");
-  }
 
   const left = document.createElement("div");
   left.className = "itemLeft";
@@ -397,9 +383,6 @@ function makeRow(m) {
 }
 
 function renderChamada() {
-  // recalcula “próximos” antes de desenhar linhas para aplicar destaque
-  calcProximos();
-
   listaDirigentes.innerHTML = "";
   listaIncorporacao.innerHTML = "";
   listaDesenvolvimento.innerHTML = "";
@@ -416,33 +399,55 @@ function renderChamada() {
   for (const m of car) listaCarencia.appendChild(makeRow(m));
 
   renderResumo();
+  renderProximos();
+}
+
+/* ====== VALIDACOES ====== */
+function collectIds(group, status) {
+  return mediumsAll
+    .filter((m) => m.active === true && m.group_type === group && (chamadasMap.get(m.id) || "") === status)
+    .map((m) => m.id);
+}
+
+function validateBeforeSave() {
+  const dirMesaIds = collectIds("dirigente", "M");
+  const dirPsIds   = collectIds("dirigente", "PS");
+
+  const incMesaIds = collectIds("incorporacao", "M");
+  const desMesaIds = collectIds("desenvolvimento", "M");
+
+  if (dirMesaIds.length !== 1) {
+    return `Dirigente na MESA: encontrado ${dirMesaIds.length}, esperado 1. Corrija antes de salvar.`;
+  }
+  if (dirPsIds.length !== 1) {
+    return `Dirigente na PSICOGRAFIA (PS): encontrado ${dirPsIds.length}, esperado 1. Corrija antes de salvar.`;
+  }
+  if (dirMesaIds[0] === dirPsIds[0]) {
+    return `Erro: o mesmo dirigente não pode ser Mesa (M) e Psicografia (PS) no mesmo dia.`;
+  }
+  if (incMesaIds.length !== 4) {
+    return `Incorporação na MESA (M): encontrado ${incMesaIds.length}, esperado 4. Corrija antes de salvar.`;
+  }
+  if (desMesaIds.length !== 4) {
+    return `Desenvolvimento na MESA (M): encontrado ${desMesaIds.length}, esperado 4. Corrija antes de salvar.`;
+  }
+
+  return null;
 }
 
 /* ====== SALVAR ====== */
-async function persistRotacaoFromClicks() {
-  const active = mediumsAll.filter((m) => m.active === true);
-
-  const dirMesaIds = active
-    .filter((m) => m.group_type === "dirigente" && (chamadasMap.get(m.id) || "") === "M")
-    .map((m) => m.id);
-
-  const incMesaIds = active
-    .filter((m) => m.group_type === "incorporacao" && (chamadasMap.get(m.id) || "") === "M")
-    .map((m) => m.id);
-
-  const desMesaIds = active
-    .filter((m) => m.group_type === "desenvolvimento" && (chamadasMap.get(m.id) || "") === "M")
-    .map((m) => m.id);
-
-  const psicoIds = active
-    .filter((m) => m.group_type === "dirigente" && (chamadasMap.get(m.id) || "") === "PS")
-    .map((m) => m.id);
+async function persistRotacaoDeterministica() {
+  const dirMesaIds = collectIds("dirigente", "M");
+  const incMesaIds = collectIds("incorporacao", "M");
+  const desMesaIds = collectIds("desenvolvimento", "M");
+  const psicoIds   = collectIds("dirigente", "PS");
 
   const lastMesaDir = pickLastClicked(dirMesaIds, tsMesa);
   const lastMesaInc = pickLastClicked(incMesaIds, tsMesa);
   const lastMesaDes = pickLastClicked(desMesaIds, tsMesa);
   let lastPsico = pickLastClicked(psicoIds, tsPsico);
 
+  // Segurança: nunca permitir o mesmo id em mesa e psico
   if (lastMesaDir && lastPsico && lastMesaDir === lastPsico) {
     const psList = eligiblePsicoDirigentes();
     lastPsico = computeNextSkip(psList, lastPsico, lastMesaDir)?.id || lastPsico;
@@ -458,6 +463,9 @@ async function onSalvarTudo() {
   if (!currentDateISO) return setErro("Selecione a data e clique em Verificar data.");
 
   try {
+    const msg = validateBeforeSave();
+    if (msg) return setErro(msg);
+
     const active = mediumsAll.filter((m) => m.active === true);
     const rows = [];
 
@@ -469,10 +477,11 @@ async function onSalvarTudo() {
     }
     if (rows.length) await sbUpsertChamadas(rows);
 
-    await persistRotacaoFromClicks();
+    await persistRotacaoDeterministica();
     await loadRotacao();
-    renderChamada(); // redesenha para atualizar destaque
-    setOk("Chamada salva e rotação atualizada. (destaques ativados)");
+    renderProximos();
+
+    setOk("Chamada salva e rotação atualizada de forma determinística pela fila.");
   } catch (e) {
     setErro("Erro ao salvar: " + e.message);
   }
@@ -483,10 +492,14 @@ async function onVerificar() {
   setErro("");
   const iso = (dataChamada.value || "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return setErro("Data inválida.");
-  currentDateISO = iso;
 
+  currentDateISO = iso;
+  await loadRotacao();
   await loadChamadasForDate(iso);
-  setOk(`Data carregada: ${iso}`);
+
+  const qtd = chamadasMap.size;
+  setOk(qtd === 0 ? `Data carregada: ${iso} (nenhuma chamada salva ainda)` : `Data carregada: ${iso} (${qtd} marcações)`);
+
   renderChamada();
 }
 
