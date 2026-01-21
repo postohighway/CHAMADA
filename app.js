@@ -1,17 +1,19 @@
 /* ============================================================
    CHAMADA DE MEDIUNS - app.js
-   Versao: 2026-01-15-d
-   FIX PRINCIPAL:
-   - Rotação determinística: se não houver timestamp, escolhe "último" pela fila (ordem_grupo, sort_order, name)
-   - Validações antes de salvar:
-       Dirigente Mesa (M): exatamente 1
-       Dirigente Psicografia (PS): exatamente 1
-       Não pode o mesmo dirigente ser M e PS
-       Incorporação Mesa (M): exatamente 4
-       Desenvolvimento Mesa (M): exatamente 4
+   Versao: 2026-01-15-e
+   FIXES:
+   1) Rotação determinística: se não houver timestamp, escolhe "último" pela fila (ordem_grupo, sort_order, name)
+   2) Validações antes de salvar:
+        Dirigente Mesa (M): exatamente 1
+        Dirigente Psicografia (PS): exatamente 1
+        Não pode o mesmo dirigente ser M e PS
+        Incorporação Mesa (M): exatamente 4
+        Desenvolvimento Mesa (M): exatamente 4
+   3) TRAVA HISTÓRICO:
+        Só atualiza rotacao quando a data salva for a ÚLTIMA data válida do banco (max(data) com M/PS).
    ============================================================ */
 
-console.log("APP.JS CARREGADO: 2026-01-15-d");
+console.log("APP.JS CARREGADO: 2026-01-15-e");
 
 /* ====== SUPABASE ====== */
 const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co";
@@ -56,7 +58,6 @@ async function sbPatch(path, body, prefer = "return=minimal") {
   return t ? JSON.parse(t) : [];
 }
 
-/* Upsert de chamadas por conflito medium_id,data (precisa unique no banco) */
 async function sbUpsertChamadas(rows) {
   const r = await fetch(`${SUPABASE_URL}/rest/v1/chamadas?on_conflict=medium_id,data`, {
     method: "POST",
@@ -134,7 +135,6 @@ let rotacao = {
   psicografia: null,
 };
 let currentDateISO = null;
-
 let chamadasMap = new Map();
 
 /* timestamps de clique: last-click wins */
@@ -155,7 +155,6 @@ function numOrInf(v) {
   return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
 }
 
-/* ORDENACAO CORRETA: fila por ordem_grupo / sort_order / nome */
 function byQueue(a, b) {
   const ag = numOrInf(a.ordem_grupo);
   const bg = numOrInf(b.ordem_grupo);
@@ -175,12 +174,10 @@ function eligible(group_type) {
     .sort(byQueue);
 }
 
-/* regra: todo dirigente pode psicografar */
 function eligiblePsicoDirigentes() {
   return eligible("dirigente");
 }
 
-/* ====== ROTACAO ====== */
 function computeNext(list, lastId) {
   if (!list.length) return null;
   if (!lastId) return list[0];
@@ -216,9 +213,7 @@ function pickLastClicked(ids, tsMap) {
     }
   }
 
-  // Sem clique (carregado do banco): pega determinístico pelo fim da fila
   if (!bestId && ids.length) bestId = lastByQueue(ids);
-
   return bestId;
 }
 
@@ -255,6 +250,12 @@ async function loadChamadasForDate(iso) {
   }
 }
 
+/* ====== ÚLTIMA DATA VÁLIDA (para permitir mexer na rotação) ====== */
+async function getUltimaDataValida() {
+  const rows = await sbGet(`chamadas?select=data&status=in.(M,PS)&order=data.desc&limit=1`);
+  return rows && rows.length ? rows[0].data : null;
+}
+
 /* ====== PROXIMOS ====== */
 function renderProximos() {
   const dir = eligible("dirigente");
@@ -265,7 +266,6 @@ function renderProximos() {
   const nextMesaDir = computeNext(dir, rotacao.mesa_dirigente);
   const nextMesaInc = computeNext(inc, rotacao.mesa_incorporacao);
   const nextMesaDes = computeNext(des, rotacao.mesa_desenvolvimento);
-
   const nextPsico = computeNextSkip(ps, rotacao.psicografia, nextMesaDir ? nextMesaDir.id : null);
 
   nextMesaDirigenteName.textContent = nextMesaDir ? nameOf(nextMesaDir) : "—";
@@ -274,10 +274,8 @@ function renderProximos() {
   nextPsicoDirigenteName.textContent= nextPsico ? nameOf(nextPsico) : "—";
 }
 
-/* ====== RESUMO ====== */
 function renderResumo() {
   const active = mediumsAll.filter((m) => m.active === true);
-
   let p = 0, m = 0, f = 0, ps = 0;
   const mesa = [];
 
@@ -297,7 +295,6 @@ function renderResumo() {
   reservasMesa.textContent = mesa.length ? mesa.join(", ") : "—";
 }
 
-/* ====== LISTA / RADIOS ====== */
 function buildStatusOptions(m) {
   const base = ["P", "M", "F"];
   if (m.group_type === "dirigente") base.push("PS");
@@ -416,26 +413,16 @@ function validateBeforeSave() {
   const incMesaIds = collectIds("incorporacao", "M");
   const desMesaIds = collectIds("desenvolvimento", "M");
 
-  if (dirMesaIds.length !== 1) {
-    return `Dirigente na MESA: encontrado ${dirMesaIds.length}, esperado 1. Corrija antes de salvar.`;
-  }
-  if (dirPsIds.length !== 1) {
-    return `Dirigente na PSICOGRAFIA (PS): encontrado ${dirPsIds.length}, esperado 1. Corrija antes de salvar.`;
-  }
-  if (dirMesaIds[0] === dirPsIds[0]) {
-    return `Erro: o mesmo dirigente não pode ser Mesa (M) e Psicografia (PS) no mesmo dia.`;
-  }
-  if (incMesaIds.length !== 4) {
-    return `Incorporação na MESA (M): encontrado ${incMesaIds.length}, esperado 4. Corrija antes de salvar.`;
-  }
-  if (desMesaIds.length !== 4) {
-    return `Desenvolvimento na MESA (M): encontrado ${desMesaIds.length}, esperado 4. Corrija antes de salvar.`;
-  }
+  if (dirMesaIds.length !== 1) return `Dirigente na MESA: encontrado ${dirMesaIds.length}, esperado 1. Corrija antes de salvar.`;
+  if (dirPsIds.length !== 1)   return `Dirigente na PSICOGRAFIA (PS): encontrado ${dirPsIds.length}, esperado 1. Corrija antes de salvar.`;
+  if (dirMesaIds[0] === dirPsIds[0]) return `Erro: o mesmo dirigente não pode ser Mesa (M) e Psicografia (PS) no mesmo dia.`;
+  if (incMesaIds.length !== 4) return `Incorporação na MESA (M): encontrado ${incMesaIds.length}, esperado 4. Corrija antes de salvar.`;
+  if (desMesaIds.length !== 4) return `Desenvolvimento na MESA (M): encontrado ${desMesaIds.length}, esperado 4. Corrija antes de salvar.`;
 
   return null;
 }
 
-/* ====== SALVAR ====== */
+/* ====== ROTACAO ====== */
 async function persistRotacaoDeterministica() {
   const dirMesaIds = collectIds("dirigente", "M");
   const incMesaIds = collectIds("incorporacao", "M");
@@ -447,7 +434,6 @@ async function persistRotacaoDeterministica() {
   const lastMesaDes = pickLastClicked(desMesaIds, tsMesa);
   let lastPsico = pickLastClicked(psicoIds, tsPsico);
 
-  // Segurança: nunca permitir o mesmo id em mesa e psico
   if (lastMesaDir && lastPsico && lastMesaDir === lastPsico) {
     const psList = eligiblePsicoDirigentes();
     lastPsico = computeNextSkip(psList, lastPsico, lastMesaDir)?.id || lastPsico;
@@ -459,6 +445,7 @@ async function persistRotacaoDeterministica() {
   if (lastPsico)   await sbPatch(`rotacao?group_type=eq.psicografia`, { last_medium_id: lastPsico });
 }
 
+/* ====== SALVAR ====== */
 async function onSalvarTudo() {
   if (!currentDateISO) return setErro("Selecione a data e clique em Verificar data.");
 
@@ -477,11 +464,21 @@ async function onSalvarTudo() {
     }
     if (rows.length) await sbUpsertChamadas(rows);
 
-    await persistRotacaoDeterministica();
-    await loadRotacao();
-    renderProximos();
+    // TRAVA HISTÓRICO: só atualiza rotação se for a última data válida
+    const ultimaValida = await getUltimaDataValida();
+    const podeAtualizar = !!ultimaValida && currentDateISO === ultimaValida;
 
-    setOk("Chamada salva e rotação atualizada de forma determinística pela fila.");
+    if (podeAtualizar) {
+      await persistRotacaoDeterministica();
+      await loadRotacao();
+      renderProximos();
+      setOk(`Chamada salva. Rotação atualizada (data mais recente: ${ultimaValida}).`);
+    } else {
+      await loadRotacao();
+      renderProximos();
+      setOk(`Chamada salva (HISTÓRICO). Rotação NÃO foi alterada. Última data válida no banco: ${ultimaValida ?? "—"}.`);
+    }
+
   } catch (e) {
     setErro("Erro ao salvar: " + e.message);
   }
