@@ -1,22 +1,11 @@
 /* ============================================================
-   CHAMADA DE MÉDIUNS - app.js
-   Versão: 2026-01-21-a
-
-   OBJETIVO (FIX DEFINITIVO):
-   1) PRÉ-RESERVA VISUAL automática quando NÃO existir chamada salva no dia:
-      - Mesa Dirigente = próximo da fila (M)  -> BORDA AMARELA + label "PRÓXIMO (MESA)"
-      - Mesa Incorporação = próximo da fila (M) -> BORDA AMARELA + label
-      - Mesa Desenvolvimento = próximo da fila (M) -> BORDA AMARELA + label
-      - Psicografia (Dirigentes) = próximo da fila (PS) evitando coincidir com Mesa Dirigente -> BORDA VERMELHA + label "PRÓXIMO (PS)"
-      - Campo "Reservas da mesa (M)" vem preenchido com os 3 nomes de M (Dir+Inc+Des) na pré-reserva.
-      - Isso NÃO salva no banco. Só salva quando você clicar "Salvar chamada".
-
-   2) Ao SALVAR:
-      - Upsert em chamadas (medium_id,data)
-      - Atualiza rotacao via RPC no banco (recalcula baseado no dia salvo)
-        -> garante que a rotação do banco bate com a chamada salva (sem “correr atrás do rabo”)
-
-   3) Mantém ordenação por (ordem_grupo, sort_order, name) em todas as filas.
+   CHAMADA DE MEDIUNS - app.js
+   Versao: 2026-01-21-a
+   Destaques:
+   - Ordem de fila por (ordem_grupo, sort_order, name)
+   - Destaque visual: amarelo (próximo mesa) / vermelho (próximo psicografia)
+   - Botão: Imprimir próxima chamada (próxima terça-feira)
+   - Participantes: botão "X" para desativar (remover do front) sem quebrar histórico
    ============================================================ */
 
 console.log("APP.JS CARREGADO: 2026-01-21-a");
@@ -68,24 +57,14 @@ async function sbPatch(path, body, prefer = "return=minimal") {
 async function sbUpsertChamadas(rows) {
   const r = await fetch(`${SUPABASE_URL}/rest/v1/chamadas?on_conflict=medium_id,data`, {
     method: "POST",
-    headers: { ...headersJson("resolution=merge-duplicates,return=minimal") },
+    headers: {
+      ...headersJson("resolution=merge-duplicates,return=minimal"),
+    },
     body: JSON.stringify(rows),
   });
   const t = await r.text();
   if (!r.ok) throw new Error(`${r.status} ${r.statusText}: ${t}`);
   return true;
-}
-
-/* RPC: recalcula rotacao a partir do dia salvo (função criada no banco) */
-async function sbRpc(fnName, payload = {}) {
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fnName}`, {
-    method: "POST",
-    headers: headersJson("return=minimal"),
-    body: JSON.stringify(payload),
-  });
-  const t = await r.text();
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}: ${t}`);
-  return t ? JSON.parse(t) : null;
 }
 
 /* ====== DOM ====== */
@@ -112,11 +91,12 @@ const msgErro = must("msgErro");
 const dataChamada = must("dataChamada");
 const btnVerificar = must("btnVerificar");
 const btnSalvar = must("btnSalvar");
+const btnImprimirProxima = must("btnImprimirProxima");
 
 const resumoGeral = must("resumoGeral");
 const reservasMesa = must("reservasMesa");
 
-/* Próximos */
+/* Proximos */
 const nextMesaDirigenteName = must("nextMesaDirigenteName");
 const nextPsicoDirigenteName = must("nextPsicoDirigenteName");
 const nextMesaIncorpName = must("nextMesaIncorpName");
@@ -153,25 +133,24 @@ let rotacao = {
 };
 let currentDateISO = null;
 
-/* Chamadas carregadas do banco (status real) */
 let chamadasMap = new Map();
-
-/* Pré-reservas visuais (apenas UI) */
-let preReservaMesaIds = new Set(); // ids marcados como M por pré-reserva
-let preReservaPsicoId = null;      // id marcado como PS por pré-reserva
-let hasSavedCallForDay = false;    // se existe qualquer registro em chamadas naquele dia
 
 /* timestamps de clique: last-click wins */
 const tsMesa = new Map();
 const tsPsico = new Map();
 
+/* Targets atuais (para destaque e impressão) */
+let nextTargets = {
+  mesa_dirigente: null,
+  mesa_incorporacao: null,
+  mesa_desenvolvimento: null,
+  psicografia: null,
+};
+
 /* ====== UI helpers ====== */
 function setOk(msg = "") { msgTopo.textContent = msg; msgErro.textContent = ""; }
 function setErro(msg = "") { msgErro.textContent = msg; }
-function setConn(ok, msg) {
-  statusText.textContent = msg;
-  if (statusPill) statusPill.classList.toggle("bad", !ok);
-}
+function setConn(ok, msg) { statusText.textContent = msg; statusPill.classList.toggle("ok", !!ok); }
 
 function pOk(msg = "") { partMsg.textContent = msg; partErr.textContent = ""; }
 function pErr(msg = "") { partErr.textContent = msg; partMsg.textContent = ""; }
@@ -232,7 +211,6 @@ function pickLastClicked(ids, tsMap) {
     if (typeof ts === "number" && ts > bestTs) {
       bestTs = ts;
       bestId = id;
-      bestTs = ts;
     }
   }
   if (!bestId && ids.length) bestId = ids[ids.length - 1];
@@ -241,6 +219,7 @@ function pickLastClicked(ids, tsMap) {
 
 /* ====== LOAD ====== */
 async function loadMediums() {
+  // IMPORTANTISSIMO: trazer ordem_grupo e sort_order
   mediumsAll = await sbGet(
     "mediums?select=id,name,group_type,active,presencas,faltas,mesa,psicografia,ordem_grupo,sort_order"
   );
@@ -261,31 +240,19 @@ async function loadRotacao() {
   }
 }
 
-/* carrega chamadas do dia; retorna quantos registros existem */
 async function loadChamadasForDate(iso) {
   chamadasMap = new Map();
   tsMesa.clear();
   tsPsico.clear();
-  preReservaMesaIds = new Set();
-  preReservaPsicoId = null;
-  hasSavedCallForDay = false;
 
   const rows = await sbGet(`chamadas?select=medium_id,status&data=eq.${iso}`);
-  hasSavedCallForDay = rows.length > 0;
-
   for (const r of rows) {
     chamadasMap.set(r.medium_id, (r.status || "").toUpperCase());
-    if ((r.status || "").toUpperCase() === "M") tsMesa.set(r.medium_id, Date.now());
-    if ((r.status || "").toUpperCase() === "PS") tsPsico.set(r.medium_id, Date.now());
   }
-  return rows.length;
 }
 
-/* ====== PRÉ-RESERVA (UI) ====== */
-function applyPreReservaIfEmptyDay() {
-  // Só aplica se NÃO houver nada salvo no banco nesse dia.
-  if (hasSavedCallForDay) return;
-
+/* ====== PROXIMOS ====== */
+function computeTargetsFromRotacao() {
   const dir = eligible("dirigente");
   const inc = eligible("incorporacao");
   const des = eligible("desenvolvimento");
@@ -297,42 +264,18 @@ function applyPreReservaIfEmptyDay() {
 
   const nextPsico = computeNextSkip(ps, rotacao.psicografia, nextMesaDir ? nextMesaDir.id : null);
 
-  // Marca no mapa (somente UI)
-  if (nextMesaDir) {
-    chamadasMap.set(nextMesaDir.id, "M");
-    preReservaMesaIds.add(nextMesaDir.id);
-    tsMesa.set(nextMesaDir.id, Date.now());
-  }
-  if (nextMesaInc) {
-    chamadasMap.set(nextMesaInc.id, "M");
-    preReservaMesaIds.add(nextMesaInc.id);
-    tsMesa.set(nextMesaInc.id, Date.now());
-  }
-  if (nextMesaDes) {
-    chamadasMap.set(nextMesaDes.id, "M");
-    preReservaMesaIds.add(nextMesaDes.id);
-    tsMesa.set(nextMesaDes.id, Date.now());
-  }
+  nextTargets = {
+    mesa_dirigente: nextMesaDir ? nextMesaDir.id : null,
+    mesa_incorporacao: nextMesaInc ? nextMesaInc.id : null,
+    mesa_desenvolvimento: nextMesaDes ? nextMesaDes.id : null,
+    psicografia: nextPsico ? nextPsico.id : null,
+  };
 
-  if (nextPsico) {
-    chamadasMap.set(nextPsico.id, "PS");
-    preReservaPsicoId = nextPsico.id;
-    tsPsico.set(nextPsico.id, Date.now());
-  }
+  return { nextMesaDir, nextMesaInc, nextMesaDes, nextPsico };
 }
 
-/* ====== PRÓXIMOS ====== */
 function renderProximos() {
-  const dir = eligible("dirigente");
-  const inc = eligible("incorporacao");
-  const des = eligible("desenvolvimento");
-  const ps  = eligiblePsicoDirigentes();
-
-  const nextMesaDir = computeNext(dir, rotacao.mesa_dirigente);
-  const nextMesaInc = computeNext(inc, rotacao.mesa_incorporacao);
-  const nextMesaDes = computeNext(des, rotacao.mesa_desenvolvimento);
-
-  const nextPsico = computeNextSkip(ps, rotacao.psicografia, nextMesaDir ? nextMesaDir.id : null);
+  const { nextMesaDir, nextMesaInc, nextMesaDes, nextPsico } = computeTargetsFromRotacao();
 
   nextMesaDirigenteName.textContent = nextMesaDir ? nameOf(nextMesaDir) : "—";
   nextMesaIncorpName.textContent    = nextMesaInc ? nameOf(nextMesaInc) : "—";
@@ -363,56 +306,28 @@ function renderResumo() {
   reservasMesa.textContent = mesa.length ? mesa.join(", ") : "—";
 }
 
-/* ====== LISTA / RADIOS + DESTAQUES ====== */
+/* ====== LISTA / RADIOS ====== */
 function buildStatusOptions(m) {
   const base = ["P", "M", "F"];
   if (m.group_type === "dirigente") base.push("PS");
   return base;
 }
 
-/* injeta estilos da marcação (amarelo mesa / vermelho psico) sem depender do CSS externo */
-function ensureHighlightStyles() {
-  if (document.getElementById("preReservaStyles")) return;
-  const st = document.createElement("style");
-  st.id = "preReservaStyles";
-  st.textContent = `
-    .itemRow.preMesa {
-      outline: 2px solid rgba(255, 199, 0, 0.85);
-      box-shadow: 0 0 0 2px rgba(255, 199, 0, 0.25) inset;
-    }
-    .itemRow.prePsico {
-      outline: 2px solid rgba(255, 77, 79, 0.85);
-      box-shadow: 0 0 0 2px rgba(255, 77, 79, 0.25) inset;
-    }
-    .itemRow .tagNext {
-      display: inline-block;
-      margin-top: 6px;
-      padding: 3px 8px;
-      border-radius: 999px;
-      font-size: 12px;
-      letter-spacing: 0.3px;
-      opacity: 0.95;
-      width: fit-content;
-    }
-    .itemRow .tagMesa {
-      border: 1px solid rgba(255, 199, 0, 0.65);
-      color: rgba(255, 199, 0, 0.95);
-      background: rgba(255, 199, 0, 0.08);
-    }
-    .itemRow .tagPsico {
-      border: 1px solid rgba(255, 77, 79, 0.65);
-      color: rgba(255, 77, 79, 0.95);
-      background: rgba(255, 77, 79, 0.08);
-    }
-  `;
-  document.head.appendChild(st);
-}
-
 function makeRow(m) {
-  ensureHighlightStyles();
-
   const wrap = document.createElement("div");
   wrap.className = "itemRow";
+
+  // Destaques por "próximo"
+  const isMesaNext =
+    (m.group_type === "dirigente" && m.id === nextTargets.mesa_dirigente) ||
+    (m.group_type === "incorporacao" && m.id === nextTargets.mesa_incorporacao) ||
+    (m.group_type === "desenvolvimento" && m.id === nextTargets.mesa_desenvolvimento);
+
+  const isPsicoNext =
+    (m.group_type === "dirigente" && m.id === nextTargets.psicografia);
+
+  if (isMesaNext) wrap.classList.add("nextMesa");
+  if (isPsicoNext) wrap.classList.add("nextPsico");
 
   const left = document.createElement("div");
   left.className = "itemLeft";
@@ -434,31 +349,13 @@ function makeRow(m) {
   left.appendChild(title);
   left.appendChild(meta);
 
-  // Tags de pré-reserva
-  const stNow = (chamadasMap.get(m.id) || "").toUpperCase();
-  const isPreMesa = !hasSavedCallForDay && preReservaMesaIds.has(m.id) && stNow === "M";
-  const isPrePsico = !hasSavedCallForDay && preReservaPsicoId === m.id && stNow === "PS";
-
-  if (isPreMesa) {
-    wrap.classList.add("preMesa");
-    const tag = document.createElement("div");
-    tag.className = "tagNext tagMesa";
-    tag.textContent = "PRÓXIMO (MESA)";
-    left.appendChild(tag);
-  }
-  if (isPrePsico) {
-    wrap.classList.add("prePsico");
-    const tag = document.createElement("div");
-    tag.className = "tagNext tagPsico";
-    tag.textContent = "PRÓXIMO (PSICOGRAFIA)";
-    left.appendChild(tag);
-  }
-
   const right = document.createElement("div");
   right.className = "itemRight";
 
   const radios = document.createElement("div");
   radios.className = "radioGroup";
+
+  const current = (chamadasMap.get(m.id) || "").toUpperCase();
 
   for (const s of buildStatusOptions(m)) {
     const rid = `r_${m.id}_${s}`;
@@ -468,7 +365,7 @@ function makeRow(m) {
     inp.name = `st_${m.id}`;
     inp.id = rid;
     inp.value = s;
-    inp.checked = stNow === s;
+    inp.checked = current === s;
 
     const lbl = document.createElement("label");
     lbl.className = "radioLbl";
@@ -488,18 +385,12 @@ function makeRow(m) {
         setErro("Selecione a data e clique em Verificar data.");
         return;
       }
-
-      // Ao usuário mexer manualmente, a pré-reserva deixa de ser “dona” daquela linha
-      if (preReservaMesaIds.has(m.id)) preReservaMesaIds.delete(m.id);
-      if (preReservaPsicoId === m.id) preReservaPsicoId = null;
-
       chamadasMap.set(m.id, s);
 
       if (s === "M") tsMesa.set(m.id, Date.now()); else tsMesa.delete(m.id);
       if (s === "PS") tsPsico.set(m.id, Date.now()); else tsPsico.delete(m.id);
 
       renderResumo();
-      renderChamada(); // re-render para atualizar marcação (amarelo/vermelho) e tag
     });
 
     radios.appendChild(inp);
@@ -518,6 +409,9 @@ function renderChamada() {
   listaDesenvolvimento.innerHTML = "";
   listaCarencia.innerHTML = "";
 
+  // Recalcula targets (para destaque consistente mesmo se mudou active/rotacao)
+  renderProximos();
+
   const dir = eligible("dirigente");
   const inc = eligible("incorporacao");
   const des = eligible("desenvolvimento");
@@ -529,10 +423,45 @@ function renderChamada() {
   for (const m of car) listaCarencia.appendChild(makeRow(m));
 
   renderResumo();
-  renderProximos();
 }
 
 /* ====== SALVAR ====== */
+async function persistRotacaoFromClicks() {
+  const active = mediumsAll.filter((m) => m.active === true);
+
+  const dirMesaIds = active
+    .filter((m) => m.group_type === "dirigente" && (chamadasMap.get(m.id) || "") === "M")
+    .map((m) => m.id);
+
+  const incMesaIds = active
+    .filter((m) => m.group_type === "incorporacao" && (chamadasMap.get(m.id) || "") === "M")
+    .map((m) => m.id);
+
+  const desMesaIds = active
+    .filter((m) => m.group_type === "desenvolvimento" && (chamadasMap.get(m.id) || "") === "M")
+    .map((m) => m.id);
+
+  const psicoIds = active
+    .filter((m) => m.group_type === "dirigente" && (chamadasMap.get(m.id) || "") === "PS")
+    .map((m) => m.id);
+
+  const lastMesaDir = pickLastClicked(dirMesaIds, tsMesa);
+  const lastMesaInc = pickLastClicked(incMesaIds, tsMesa);
+  const lastMesaDes = pickLastClicked(desMesaIds, tsMesa);
+  let lastPsico = pickLastClicked(psicoIds, tsPsico);
+
+  // Garante que não seja a mesma pessoa em Mesa e Psicografia
+  if (lastMesaDir && lastPsico && lastMesaDir === lastPsico) {
+    const psList = eligiblePsicoDirigentes();
+    lastPsico = computeNextSkip(psList, lastPsico, lastMesaDir)?.id || lastPsico;
+  }
+
+  if (lastMesaDir) await sbPatch(`rotacao?group_type=eq.mesa_dirigente`, { last_medium_id: lastMesaDir });
+  if (lastMesaInc) await sbPatch(`rotacao?group_type=eq.mesa_incorporacao`, { last_medium_id: lastMesaInc });
+  if (lastMesaDes) await sbPatch(`rotacao?group_type=eq.mesa_desenvolvimento`, { last_medium_id: lastMesaDes });
+  if (lastPsico)   await sbPatch(`rotacao?group_type=eq.psicografia`, { last_medium_id: lastPsico });
+}
+
 async function onSalvarTudo() {
   if (!currentDateISO) return setErro("Selecione a data e clique em Verificar data.");
 
@@ -546,23 +475,13 @@ async function onSalvarTudo() {
         rows.push({ medium_id: m.id, data: currentDateISO, status: st });
       }
     }
-
     if (rows.length) await sbUpsertChamadas(rows);
 
-    // Recalcula rotacao no BANCO (fix definitivo)
-    // Função criada no banco: update_rotacao_from_date(p_data date)
-    await sbRpc("update_rotacao_from_date", { p_data: currentDateISO });
-
-    // Recarrega rotacao para UI ficar igual ao banco
+    await persistRotacaoFromClicks();
     await loadRotacao();
+    renderChamada();
 
-    // Agora esse dia passa a ser “salvo”
-    hasSavedCallForDay = true;
-    preReservaMesaIds = new Set();
-    preReservaPsicoId = null;
-
-    renderProximos();
-    setOk("Chamada salva. Rotação recalculada no banco com base no dia salvo.");
+    setOk("Chamada salva e rotação atualizada.");
   } catch (e) {
     setErro("Erro ao salvar: " + e.message);
   }
@@ -572,25 +491,163 @@ async function onSalvarTudo() {
 async function onVerificar() {
   setErro("");
   const iso = (dataChamada.value || "").trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return setErro("Data inválida (use AAAA-MM-DD).");
-
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return setErro("Data inválida.");
   currentDateISO = iso;
+  await loadChamadasForDate(iso);
+  setOk(`Data carregada: ${iso}`);
+  renderChamada();
+}
 
-  // 1) carrega o que existe no banco
-  const qtd = await loadChamadasForDate(iso);
+/* ====== IMPRESSÃO: PRÓXIMA TERÇA ====== */
+function pad2(n) { return String(n).padStart(2, "0"); }
 
-  // 2) se não existe nada, aplica PRÉ-RESERVA VISUAL (amarelo/vermelho)
-  applyPreReservaIfEmptyDay();
+function toISODate(d) {
+  const yy = d.getFullYear();
+  const mm = pad2(d.getMonth() + 1);
+  const dd = pad2(d.getDate());
+  return `${yy}-${mm}-${dd}`;
+}
 
-  // 3) mensagens
-  if (qtd === 0) {
-    setOk(`Data carregada: ${iso} (pré-reserva aplicada — ainda não está salva)`);
-  } else {
-    setOk(`Data carregada: ${iso} (chamada já existe no banco)`);
+function nextTuesdayISO(fromDate = new Date()) {
+  const d = new Date(fromDate.getFullYear(), fromDate.getMonth(), fromDate.getDate());
+  // 0=domingo ... 2=terça
+  let add = (2 - d.getDay() + 7) % 7;
+  if (add === 0) add = 7; // se hoje é terça, pega a próxima
+  d.setDate(d.getDate() + add);
+  return toISODate(d);
+}
+
+function formatBR(iso) {
+  const [y, m, d] = iso.split("-");
+  return `${d}/${m}/${y}`;
+}
+
+function esc(s) {
+  return String(s)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;");
+}
+
+function buildPrintDoc(dateISO) {
+  const { nextMesaDir, nextMesaInc, nextMesaDes, nextPsico } = computeTargetsFromRotacao();
+
+  const dir = eligible("dirigente");
+  const inc = eligible("incorporacao");
+  const des = eligible("desenvolvimento");
+  const car = eligible("carencia");
+
+  function mkTable(list, opts={ ps:false }) {
+    const cols = opts.ps ? "<th>PS</th>" : "";
+    const rows = list.map((m, i) => `
+      <tr>
+        <td style="width:36px; text-align:right;">${i+1}</td>
+        <td>${esc(nameOf(m))}</td>
+        <td style="text-align:center;">[ ]</td>
+        <td style="text-align:center;">[ ]</td>
+        <td style="text-align:center;">[ ]</td>
+        ${opts.ps ? '<td style="text-align:center;">[ ]</td>' : ''}
+      </tr>
+    `).join("");
+
+    return `
+      <table>
+        <thead>
+          <tr>
+            <th style="width:36px;">#</th>
+            <th>Nome</th>
+            <th>P</th>
+            <th>M</th>
+            <th>F</th>
+            ${cols}
+          </tr>
+        </thead>
+        <tbody>
+          ${rows || '<tr><td colspan="6">—</td></tr>'}
+        </tbody>
+      </table>
+    `;
   }
 
-  // 4) render final
-  renderChamada();
+  const reservas = `
+    <div class="resBox">
+      <div><strong>Data:</strong> ${formatBR(dateISO)} (terça-feira)</div>
+      <div style="margin-top:6px;">
+        <strong>Reservas sugeridas (para conferência):</strong><br/>
+        Mesa Dirigente: <span class="tag warn">${esc(nextMesaDir ? nameOf(nextMesaDir) : "—")}</span>
+        Psicografia: <span class="tag err">${esc(nextPsico ? nameOf(nextPsico) : "—")}</span><br/>
+        Mesa Incorporação: <span class="tag warn">${esc(nextMesaInc ? nameOf(nextMesaInc) : "—")}</span><br/>
+        Mesa Desenvolvimento: <span class="tag warn">${esc(nextMesaDes ? nameOf(nextMesaDes) : "—")}</span>
+      </div>
+      <div style="margin-top:10px; color:#333;">
+        Observação: esta impressão é um “backup” para fazer a chamada manualmente se o sistema falhar.
+      </div>
+    </div>
+  `;
+
+  return `
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Impressão - Chamada ${formatBR(dateISO)}</title>
+  <style>
+    body{font-family:Arial, sans-serif; margin:18px; color:#111}
+    h1{margin:0 0 6px; font-size:18px}
+    h2{margin:18px 0 8px; font-size:14px}
+    .resBox{border:1px solid #999; padding:10px; border-radius:8px; background:#f7f7f7}
+    .tag{display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; border:1px solid #999}
+    .warn{background:#fff4d6; border-color:#f59e0b}
+    .err{background:#ffe3e3; border-color:#ef4444}
+    table{width:100%; border-collapse:collapse; margin-top:6px}
+    th,td{border:1px solid #999; padding:6px 8px; font-size:12px}
+    th{background:#efefef; text-align:left}
+    @media print{ .noPrint{display:none} }
+  </style>
+</head>
+<body>
+  <div class="noPrint" style="text-align:right; margin-bottom:10px;">
+    <button onclick="window.print()">Imprimir</button>
+  </div>
+
+  <h1>Chamada de Médiuns - ${formatBR(dateISO)}</h1>
+  ${reservas}
+
+  <h2>Dirigentes</h2>
+  ${mkTable(dir, {ps:true})}
+
+  <h2>Médiuns de Incorporação</h2>
+  ${mkTable(inc)}
+
+  <h2>Médiuns em Desenvolvimento</h2>
+  ${mkTable(des)}
+
+  <h2>Médiuns em Carência</h2>
+  ${mkTable(car)}
+</body>
+</html>
+  `;
+}
+
+async function onImprimirProxima() {
+  try {
+    // Garante base atualizada
+    await loadMediums();
+    await loadRotacao();
+
+    const iso = nextTuesdayISO(new Date());
+    const w = window.open("", "_blank");
+    if (!w) {
+      setErro("Bloqueio de pop-up: permita abrir nova aba para imprimir.");
+      return;
+    }
+    w.document.open();
+    w.document.write(buildPrintDoc(iso));
+    w.document.close();
+  } catch (e) {
+    setErro("Erro ao preparar impressão: " + e.message);
+  }
 }
 
 /* ====== PARTICIPANTES ====== */
@@ -617,13 +674,42 @@ function renderParticipants() {
   for (const m of filtered) {
     const row = document.createElement("div");
     row.className = "itemRow";
-    row.innerHTML = `
-      <div class="itemLeft">
-        <div class="itemName">${nameOf(m)}</div>
-        <div class="itemMeta">Grupo: ${m.group_type} | Ativo: ${m.active ? "Sim" : "Não"} | Ordem: ${m.ordem_grupo ?? "-"} / ${m.sort_order ?? "-"}</div>
-      </div>
-      <div class="itemRight"></div>
+
+    const left = document.createElement("div");
+    left.className = "itemLeft";
+    left.innerHTML = `
+      <div class="itemName">${esc(nameOf(m))}</div>
+      <div class="itemMeta">Grupo: ${m.group_type} | Ativo: ${m.active ? "Sim" : "Não"} | Ordem: ${m.ordem_grupo ?? "-"} / ${m.sort_order ?? "-"}</div>
     `;
+
+    const right = document.createElement("div");
+    right.className = "itemRight";
+
+    // Botão "X" (soft delete): desativa para sumir do front sem quebrar histórico (chamadas)
+    const btnX = document.createElement("button");
+    btnX.className = "btn danger small";
+    btnX.type = "button";
+    btnX.textContent = "X";
+    btnX.title = "Remover (desativar) participante";
+
+    btnX.disabled = !m.active; // se já está inativo, não precisa
+    btnX.addEventListener("click", async () => {
+      const ok = confirm(`Remover (desativar) o participante "${nameOf(m)}"?\n\nIsso NÃO apaga chamadas antigas, apenas desativa para não aparecer no front.`);
+      if (!ok) return;
+
+      try {
+        await sbPatch(`mediums?id=eq.${m.id}`, { active: false });
+        pOk(`Participante removido (desativado): ${nameOf(m)}`);
+        await reloadParticipants();
+      } catch (e) {
+        pErr("Erro ao remover: " + e.message);
+      }
+    });
+
+    right.appendChild(btnX);
+
+    row.appendChild(left);
+    row.appendChild(right);
     listaParticipantes.appendChild(row);
   }
 }
@@ -699,6 +785,7 @@ function showTab(which) {
 
   btnVerificar.addEventListener("click", onVerificar);
   btnSalvar.addEventListener("click", onSalvarTudo);
+  btnImprimirProxima.addEventListener("click", onImprimirProxima);
 
   tabChamada.addEventListener("click", () => showTab("chamada"));
   tabParticipantes.addEventListener("click", () => showTab("participantes"));
