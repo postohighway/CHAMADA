@@ -1,14 +1,12 @@
 /* ============================================================
    CHAMADA DE MEDIUNS - app.js
-   Versao: 2026-01-21-a
-   Destaques:
-   - Ordem de fila por (ordem_grupo, sort_order, name)
-   - Destaque visual: amarelo (próximo mesa) / vermelho (próximo psicografia)
-   - Botão: Imprimir próxima chamada (próxima terça-feira)
-   - Participantes: botão "X" para desativar (remover do front) sem quebrar histórico
+   Versao: 2026-02-07-a
+   FIX DEFINITIVO: MU (Último da Mesa) gravado no banco
+   - MU existe APENAS para incorporação e desenvolvimento
+   - Dirigente mesa (M) e psicografia (PS) continuam 1 por dia
    ============================================================ */
 
-console.log("APP.JS CARREGADO: 2026-01-21-a");
+console.log("APP.JS CARREGADO: 2026-02-07-a");
 
 /* ====== SUPABASE ====== */
 const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co";
@@ -135,11 +133,14 @@ let currentDateISO = null;
 
 let chamadasMap = new Map();
 
-/* timestamps de clique: last-click wins */
+// MU (Último da Mesa) - somente para incorporação e desenvolvimento
+let ultimoMesaById = new Map(); // medium_id -> boolean
+
+/* timestamps de clique: fallback */
 const tsMesa = new Map();
 const tsPsico = new Map();
 
-/* Targets atuais (para destaque e impressão) */
+/* targets calculados a partir da rotacao */
 let nextTargets = {
   mesa_dirigente: null,
   mesa_incorporacao: null,
@@ -150,7 +151,7 @@ let nextTargets = {
 /* ====== UI helpers ====== */
 function setOk(msg = "") { msgTopo.textContent = msg; msgErro.textContent = ""; }
 function setErro(msg = "") { msgErro.textContent = msg; }
-function setConn(ok, msg) { statusText.textContent = msg; statusPill.classList.toggle("ok", !!ok); }
+function setConn(ok, msg) { statusText.textContent = msg; }
 
 function pOk(msg = "") { partMsg.textContent = msg; partErr.textContent = ""; }
 function pErr(msg = "") { partErr.textContent = msg; partMsg.textContent = ""; }
@@ -244,14 +245,17 @@ async function loadChamadasForDate(iso) {
   chamadasMap = new Map();
   tsMesa.clear();
   tsPsico.clear();
+  ultimoMesaById = new Map();
 
-  const rows = await sbGet(`chamadas?select=medium_id,status&data=eq.${iso}`);
+  const rows = await sbGet(`chamadas?select=medium_id,status,is_ultimo_mesa&data=eq.${iso}`);
   for (const r of rows) {
-    chamadasMap.set(r.medium_id, (r.status || "").toUpperCase());
+    const st = (r.status || "").toUpperCase();
+    chamadasMap.set(r.medium_id, st);
+    ultimoMesaById.set(r.medium_id, !!r.is_ultimo_mesa);
   }
 }
 
-/* ====== PROXIMOS ====== */
+/* ====== PROXIMOS / TARGETS ====== */
 function computeTargetsFromRotacao() {
   const dir = eligible("dirigente");
   const inc = eligible("incorporacao");
@@ -311,6 +315,38 @@ function buildStatusOptions(m) {
   const base = ["P", "M", "F"];
   if (m.group_type === "dirigente") base.push("PS");
   return base;
+}
+
+function isMesaMultiGroup(group_type) {
+  return group_type === "incorporacao" || group_type === "desenvolvimento";
+}
+
+function setUltimoMesaExclusive(group_type, chosenId) {
+  // Só para incorporação e desenvolvimento
+  if (!isMesaMultiGroup(group_type)) return;
+
+  for (const m of mediumsAll) {
+    if (m.group_type === group_type) {
+      ultimoMesaById.set(m.id, m.id === chosenId);
+    }
+  }
+}
+
+function clearUltimoMesaIfNeeded(med) {
+  if (!isMesaMultiGroup(med.group_type)) return;
+  if (ultimoMesaById.get(med.id)) ultimoMesaById.set(med.id, false);
+}
+
+function enforceUniqueStatusInDirigentes(statusChar, chosenId) {
+  // Para dirigente: deve existir no máximo 1 "M" e no máximo 1 "PS" por dia.
+  for (const m of mediumsAll) {
+    if (m.group_type !== "dirigente") continue;
+    if (m.id === chosenId) continue;
+    if ((chamadasMap.get(m.id) || "").toUpperCase() === statusChar) {
+      // volta para Presente por segurança (não deixa "sem status")
+      chamadasMap.set(m.id, "P");
+    }
+  }
 }
 
 function makeRow(m) {
@@ -385,12 +421,24 @@ function makeRow(m) {
         setErro("Selecione a data e clique em Verificar data.");
         return;
       }
+
+      // 1) Atualiza status no mapa
       chamadasMap.set(m.id, s);
 
+      // 2) Regras de unicidade (dirigentes)
+      if (m.group_type === "dirigente" && s === "M") enforceUniqueStatusInDirigentes("M", m.id);
+      if (m.group_type === "dirigente" && s === "PS") enforceUniqueStatusInDirigentes("PS", m.id);
+
+      // 3) MU (Último da Mesa) — só incorp/desenv
+      if (isMesaMultiGroup(m.group_type) && s !== "M") {
+        clearUltimoMesaIfNeeded(m);
+      }
+
+      // 4) fallback timestamps
       if (s === "M") tsMesa.set(m.id, Date.now()); else tsMesa.delete(m.id);
       if (s === "PS") tsPsico.set(m.id, Date.now()); else tsPsico.delete(m.id);
 
-      renderResumo();
+      renderChamada();
     });
 
     radios.appendChild(inp);
@@ -398,6 +446,35 @@ function makeRow(m) {
   }
 
   right.appendChild(radios);
+
+  // Botão ⭐ MU (Último da Mesa) — só incorporação e desenvolvimento
+  if (isMesaMultiGroup(m.group_type)) {
+    const stNow = (chamadasMap.get(m.id) || "").toUpperCase();
+    const star = document.createElement("button");
+    star.type = "button";
+    star.className = "starBtn" + (ultimoMesaById.get(m.id) ? " on" : "");
+    star.textContent = "★";
+    star.title = "Definir como ÚLTIMO da mesa (MU) para rotacionar corretamente";
+
+    star.disabled = stNow !== "M";
+
+    star.addEventListener("click", () => {
+      if (!currentDateISO) {
+        setErro("Selecione a data e clique em Verificar data.");
+        return;
+      }
+      const st = (chamadasMap.get(m.id) || "").toUpperCase();
+      if (st !== "M") {
+        setErro("MU só pode ser marcado em quem está como M (mesa).");
+        return;
+      }
+      setUltimoMesaExclusive(m.group_type, m.id);
+      renderChamada();
+    });
+
+    right.appendChild(star);
+  }
+
   wrap.appendChild(left);
   wrap.appendChild(right);
   return wrap;
@@ -409,13 +486,12 @@ function renderChamada() {
   listaDesenvolvimento.innerHTML = "";
   listaCarencia.innerHTML = "";
 
-  // Recalcula targets (para destaque consistente mesmo se mudou active/rotacao)
-  renderProximos();
-
   const dir = eligible("dirigente");
   const inc = eligible("incorporacao");
   const des = eligible("desenvolvimento");
   const car = eligible("carencia");
+
+  computeTargetsFromRotacao();
 
   for (const m of dir) listaDirigentes.appendChild(makeRow(m));
   for (const m of inc) listaIncorporacao.appendChild(makeRow(m));
@@ -423,43 +499,52 @@ function renderChamada() {
   for (const m of car) listaCarencia.appendChild(makeRow(m));
 
   renderResumo();
+  renderProximos();
 }
 
 /* ====== SALVAR ====== */
 async function persistRotacaoFromClicks() {
   const active = mediumsAll.filter((m) => m.active === true);
 
-  const dirMesaIds = active
-    .filter((m) => m.group_type === "dirigente" && (chamadasMap.get(m.id) || "") === "M")
-    .map((m) => m.id);
+  // Dirigente: no máximo 1 M e 1 PS
+  const lastMesaDir = active
+    .filter((m) => m.group_type === "dirigente" && (chamadasMap.get(m.id) || "").toUpperCase() === "M")
+    .map((m) => m.id)[0] || null;
 
+  const lastPsico = active
+    .filter((m) => m.group_type === "dirigente" && (chamadasMap.get(m.id) || "").toUpperCase() === "PS")
+    .map((m) => m.id)[0] || null;
+
+  // Incorp/Desenv: MU é a fonte de verdade
   const incMesaIds = active
-    .filter((m) => m.group_type === "incorporacao" && (chamadasMap.get(m.id) || "") === "M")
+    .filter((m) => m.group_type === "incorporacao" && (chamadasMap.get(m.id) || "").toUpperCase() === "M")
     .map((m) => m.id);
 
   const desMesaIds = active
-    .filter((m) => m.group_type === "desenvolvimento" && (chamadasMap.get(m.id) || "") === "M")
+    .filter((m) => m.group_type === "desenvolvimento" && (chamadasMap.get(m.id) || "").toUpperCase() === "M")
     .map((m) => m.id);
 
-  const psicoIds = active
-    .filter((m) => m.group_type === "dirigente" && (chamadasMap.get(m.id) || "") === "PS")
-    .map((m) => m.id);
+  const lastMesaInc =
+    incMesaIds.find((id) => ultimoMesaById.get(id) === true) ||
+    pickLastClicked(incMesaIds, tsMesa) ||
+    null;
 
-  const lastMesaDir = pickLastClicked(dirMesaIds, tsMesa);
-  const lastMesaInc = pickLastClicked(incMesaIds, tsMesa);
-  const lastMesaDes = pickLastClicked(desMesaIds, tsMesa);
-  let lastPsico = pickLastClicked(psicoIds, tsPsico);
+  const lastMesaDes =
+    desMesaIds.find((id) => ultimoMesaById.get(id) === true) ||
+    pickLastClicked(desMesaIds, tsMesa) ||
+    null;
 
-  // Garante que não seja a mesma pessoa em Mesa e Psicografia
-  if (lastMesaDir && lastPsico && lastMesaDir === lastPsico) {
+  // Segurança: não permitir mesma pessoa em mesa_dirigente e psicografia
+  let psicoFinal = lastPsico;
+  if (lastMesaDir && psicoFinal && lastMesaDir === psicoFinal) {
     const psList = eligiblePsicoDirigentes();
-    lastPsico = computeNextSkip(psList, lastPsico, lastMesaDir)?.id || lastPsico;
+    psicoFinal = computeNextSkip(psList, psicoFinal, lastMesaDir)?.id || psicoFinal;
   }
 
   if (lastMesaDir) await sbPatch(`rotacao?group_type=eq.mesa_dirigente`, { last_medium_id: lastMesaDir });
   if (lastMesaInc) await sbPatch(`rotacao?group_type=eq.mesa_incorporacao`, { last_medium_id: lastMesaInc });
   if (lastMesaDes) await sbPatch(`rotacao?group_type=eq.mesa_desenvolvimento`, { last_medium_id: lastMesaDes });
-  if (lastPsico)   await sbPatch(`rotacao?group_type=eq.psicografia`, { last_medium_id: lastPsico });
+  if (psicoFinal)  await sbPatch(`rotacao?group_type=eq.psicografia`, { last_medium_id: psicoFinal });
 }
 
 async function onSalvarTudo() {
@@ -467,21 +552,47 @@ async function onSalvarTudo() {
 
   try {
     const active = mediumsAll.filter((m) => m.active === true);
-    const rows = [];
 
+    // ===== Validação MU =====
+    const incMesa = active.filter((m) => m.group_type === "incorporacao" && (chamadasMap.get(m.id) || "").toUpperCase() === "M");
+    const desMesa = active.filter((m) => m.group_type === "desenvolvimento" && (chamadasMap.get(m.id) || "").toUpperCase() === "M");
+
+    const incMU = incMesa.filter((m) => ultimoMesaById.get(m.id) === true);
+    const desMU = desMesa.filter((m) => ultimoMesaById.get(m.id) === true);
+
+    if (incMesa.length > 0 && incMU.length !== 1) {
+      return setErro("Incorporação: marque exatamente 1 ⭐ (MU) entre os que estão como M.");
+    }
+    if (desMesa.length > 0 && desMU.length !== 1) {
+      return setErro("Desenvolvimento: marque exatamente 1 ⭐ (MU) entre os que estão como M.");
+    }
+
+    // ===== Salva chamada (inclui is_ultimo_mesa) =====
+    const rows = [];
     for (const m of active) {
       const st = (chamadasMap.get(m.id) || "").toUpperCase();
-      if (["P", "M", "F", "PS"].includes(st)) {
-        rows.push({ medium_id: m.id, data: currentDateISO, status: st });
-      }
+      if (!["P", "M", "F", "PS"].includes(st)) continue;
+
+      const isUltimoMesa =
+        (m.group_type === "incorporacao" || m.group_type === "desenvolvimento")
+          ? (st === "M" && ultimoMesaById.get(m.id) === true)
+          : false;
+
+      rows.push({
+        medium_id: m.id,
+        data: currentDateISO,
+        status: st,
+        is_ultimo_mesa: isUltimoMesa
+      });
     }
+
     if (rows.length) await sbUpsertChamadas(rows);
 
     await persistRotacaoFromClicks();
     await loadRotacao();
     renderChamada();
 
-    setOk("Chamada salva e rotação atualizada.");
+    setOk("Chamada salva. MU gravado (incorp/desenv) e rotação atualizada corretamente.");
   } catch (e) {
     setErro("Erro ao salvar: " + e.message);
   }
@@ -496,158 +607,6 @@ async function onVerificar() {
   await loadChamadasForDate(iso);
   setOk(`Data carregada: ${iso}`);
   renderChamada();
-}
-
-/* ====== IMPRESSÃO: PRÓXIMA TERÇA ====== */
-function pad2(n) { return String(n).padStart(2, "0"); }
-
-function toISODate(d) {
-  const yy = d.getFullYear();
-  const mm = pad2(d.getMonth() + 1);
-  const dd = pad2(d.getDate());
-  return `${yy}-${mm}-${dd}`;
-}
-
-function nextTuesdayISO(fromDate = new Date()) {
-  const d = new Date(fromDate.getFullYear(), fromDate.getMonth(), fromDate.getDate());
-  // 0=domingo ... 2=terça
-  let add = (2 - d.getDay() + 7) % 7;
-  if (add === 0) add = 7; // se hoje é terça, pega a próxima
-  d.setDate(d.getDate() + add);
-  return toISODate(d);
-}
-
-function formatBR(iso) {
-  const [y, m, d] = iso.split("-");
-  return `${d}/${m}/${y}`;
-}
-
-function esc(s) {
-  return String(s)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;");
-}
-
-function buildPrintDoc(dateISO) {
-  const { nextMesaDir, nextMesaInc, nextMesaDes, nextPsico } = computeTargetsFromRotacao();
-
-  const dir = eligible("dirigente");
-  const inc = eligible("incorporacao");
-  const des = eligible("desenvolvimento");
-  const car = eligible("carencia");
-
-  function mkTable(list, opts={ ps:false }) {
-    const cols = opts.ps ? "<th>PS</th>" : "";
-    const rows = list.map((m, i) => `
-      <tr>
-        <td style="width:36px; text-align:right;">${i+1}</td>
-        <td>${esc(nameOf(m))}</td>
-        <td style="text-align:center;">[ ]</td>
-        <td style="text-align:center;">[ ]</td>
-        <td style="text-align:center;">[ ]</td>
-        ${opts.ps ? '<td style="text-align:center;">[ ]</td>' : ''}
-      </tr>
-    `).join("");
-
-    return `
-      <table>
-        <thead>
-          <tr>
-            <th style="width:36px;">#</th>
-            <th>Nome</th>
-            <th>P</th>
-            <th>M</th>
-            <th>F</th>
-            ${cols}
-          </tr>
-        </thead>
-        <tbody>
-          ${rows || '<tr><td colspan="6">—</td></tr>'}
-        </tbody>
-      </table>
-    `;
-  }
-
-  const reservas = `
-    <div class="resBox">
-      <div><strong>Data:</strong> ${formatBR(dateISO)} (terça-feira)</div>
-      <div style="margin-top:6px;">
-        <strong>Reservas sugeridas (para conferência):</strong><br/>
-        Mesa Dirigente: <span class="tag warn">${esc(nextMesaDir ? nameOf(nextMesaDir) : "—")}</span>
-        Psicografia: <span class="tag err">${esc(nextPsico ? nameOf(nextPsico) : "—")}</span><br/>
-        Mesa Incorporação: <span class="tag warn">${esc(nextMesaInc ? nameOf(nextMesaInc) : "—")}</span><br/>
-        Mesa Desenvolvimento: <span class="tag warn">${esc(nextMesaDes ? nameOf(nextMesaDes) : "—")}</span>
-      </div>
-      <div style="margin-top:10px; color:#333;">
-        Observação: esta impressão é um “backup” para fazer a chamada manualmente se o sistema falhar.
-      </div>
-    </div>
-  `;
-
-  return `
-<!doctype html>
-<html lang="pt-BR">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Impressão - Chamada ${formatBR(dateISO)}</title>
-  <style>
-    body{font-family:Arial, sans-serif; margin:18px; color:#111}
-    h1{margin:0 0 6px; font-size:18px}
-    h2{margin:18px 0 8px; font-size:14px}
-    .resBox{border:1px solid #999; padding:10px; border-radius:8px; background:#f7f7f7}
-    .tag{display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; border:1px solid #999}
-    .warn{background:#fff4d6; border-color:#f59e0b}
-    .err{background:#ffe3e3; border-color:#ef4444}
-    table{width:100%; border-collapse:collapse; margin-top:6px}
-    th,td{border:1px solid #999; padding:6px 8px; font-size:12px}
-    th{background:#efefef; text-align:left}
-    @media print{ .noPrint{display:none} }
-  </style>
-</head>
-<body>
-  <div class="noPrint" style="text-align:right; margin-bottom:10px;">
-    <button onclick="window.print()">Imprimir</button>
-  </div>
-
-  <h1>Chamada de Médiuns - ${formatBR(dateISO)}</h1>
-  ${reservas}
-
-  <h2>Dirigentes</h2>
-  ${mkTable(dir, {ps:true})}
-
-  <h2>Médiuns de Incorporação</h2>
-  ${mkTable(inc)}
-
-  <h2>Médiuns em Desenvolvimento</h2>
-  ${mkTable(des)}
-
-  <h2>Médiuns em Carência</h2>
-  ${mkTable(car)}
-</body>
-</html>
-  `;
-}
-
-async function onImprimirProxima() {
-  try {
-    // Garante base atualizada
-    await loadMediums();
-    await loadRotacao();
-
-    const iso = nextTuesdayISO(new Date());
-    const w = window.open("", "_blank");
-    if (!w) {
-      setErro("Bloqueio de pop-up: permita abrir nova aba para imprimir.");
-      return;
-    }
-    w.document.open();
-    w.document.write(buildPrintDoc(iso));
-    w.document.close();
-  } catch (e) {
-    setErro("Erro ao preparar impressão: " + e.message);
-  }
 }
 
 /* ====== PARTICIPANTES ====== */
@@ -678,21 +637,21 @@ function renderParticipants() {
     const left = document.createElement("div");
     left.className = "itemLeft";
     left.innerHTML = `
-      <div class="itemName">${esc(nameOf(m))}</div>
+      <div class="itemName">${nameOf(m)}</div>
       <div class="itemMeta">Grupo: ${m.group_type} | Ativo: ${m.active ? "Sim" : "Não"} | Ordem: ${m.ordem_grupo ?? "-"} / ${m.sort_order ?? "-"}</div>
     `;
 
     const right = document.createElement("div");
     right.className = "itemRight";
 
-    // Botão "X" (soft delete): desativa para sumir do front sem quebrar histórico (chamadas)
+    // Botão "X" (soft delete): desativa para sumir do front sem quebrar histórico
     const btnX = document.createElement("button");
     btnX.className = "btn danger small";
     btnX.type = "button";
     btnX.textContent = "X";
     btnX.title = "Remover (desativar) participante";
 
-    btnX.disabled = !m.active; // se já está inativo, não precisa
+    btnX.disabled = !m.active;
     btnX.addEventListener("click", async () => {
       const ok = confirm(`Remover (desativar) o participante "${nameOf(m)}"?\n\nIsso NÃO apaga chamadas antigas, apenas desativa para não aparecer no front.`);
       if (!ok) return;
@@ -753,6 +712,86 @@ async function onAdicionarParticipante() {
   } catch (e) {
     pErr("Erro ao adicionar: " + e.message);
   }
+}
+
+/* ====== IMPRIMIR PRÓXIMA CHAMADA ====== */
+function pad2(n){ return String(n).padStart(2,"0"); }
+function toISODate(d){
+  return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
+}
+function nextTuesdayFrom(date){
+  const d = new Date(date);
+  const day = d.getDay(); // 0 dom .. 2 ter
+  const diff = (2 - day + 7) % 7;
+  d.setDate(d.getDate() + (diff === 0 ? 7 : diff));
+  d.setHours(0,0,0,0);
+  return d;
+}
+function escapeHtml(s){
+  return (s||"")
+    .replaceAll("&","&amp;")
+    .replaceAll("<","&lt;")
+    .replaceAll(">","&gt;");
+}
+function buildPrintDoc(dateISO) {
+  const { nextMesaDir, nextMesaInc, nextMesaDes, nextPsico } = computeTargetsFromRotacao();
+
+  const dir = eligible("dirigente");
+  const inc = eligible("incorporacao");
+  const des = eligible("desenvolvimento");
+
+  const html = `
+  <html>
+    <head>
+      <meta charset="utf-8"/>
+      <title>Chamada ${dateISO}</title>
+      <style>
+        body{font-family:Arial,Helvetica,sans-serif;margin:24px}
+        h1{margin:0 0 10px}
+        .muted{color:#555;margin-bottom:18px}
+        .box{border:1px solid #222;border-radius:10px;padding:12px;margin:10px 0}
+        .row{display:flex;justify-content:space-between;gap:10px}
+        .k{font-weight:700}
+      </style>
+    </head>
+    <body>
+      <h1>Chamada - ${dateISO}</h1>
+      <div class="muted">Plano de reserva (caso o app falhe):</div>
+
+      <div class="box">
+        <div class="row"><div class="k">Dirigente (Mesa)</div><div>${escapeHtml(nextMesaDir ? nextMesaDir.name : "—")}</div></div>
+        <div class="row"><div class="k">Dirigente (Psicografia)</div><div>${escapeHtml(nextPsico ? nextPsico.name : "—")}</div></div>
+      </div>
+
+      <div class="box">
+        <div class="k">Incorporação (Mesa) - próximo</div>
+        <div>${escapeHtml(nextMesaInc ? nextMesaInc.name : "—")}</div>
+      </div>
+
+      <div class="box">
+        <div class="k">Desenvolvimento (Mesa) - próximo</div>
+        <div>${escapeHtml(nextMesaDes ? nextMesaDes.name : "—")}</div>
+      </div>
+
+      <div class="muted" style="margin-top:20px">
+        Obs.: Para rotação perfeita em Incorp/Desenv, marque ⭐ MU (Último da Mesa) no 4º "M".
+      </div>
+    </body>
+  </html>`;
+  return html;
+}
+function onImprimirProxima() {
+  const base = currentDateISO ? new Date(currentDateISO + "T00:00:00") : new Date();
+  const nextTue = nextTuesdayFrom(base);
+  const iso = toISODate(nextTue);
+
+  const w = window.open("", "_blank");
+  if (!w) return setErro("Pop-up bloqueado. Libere pop-ups para imprimir.");
+  w.document.open();
+  w.document.write(buildPrintDoc(iso));
+  w.document.close();
+  w.focus();
+  w.print();
 }
 
 /* ====== TABS ====== */
