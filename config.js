@@ -1,3 +1,3 @@
 // config.js
-window.SUPABASE_URLhttps:= '//nouzzyrevykdmnqifjjt.supabase.co';
+window.SUPABASE_URLhttps:= 'https://lnfaukysiiflparrciwz.supabase.co';
 window.SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5vdXp6eXJldnlrZG1ucWlmamp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUzOTYzMDIsImV4cCI6MjA4MDk3MjMwMn0.s2OzeSXe7CrKDNl6fXkTcMj_Vgitod0l0h0BiJA79nc';
