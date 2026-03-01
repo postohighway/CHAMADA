@@ -1,841 +1,510 @@
-/* ============================================================
-   CHAMADA DE MEDIUNS - app.js
-   Versao: 2026-02-07-a
-   FIX DEFINITIVO: MU (Último da Mesa) gravado no banco
-   - MU existe APENAS para incorporação e desenvolvimento
-   - Dirigente mesa (M) e psicografia (PS) continuam 1 por dia
-   ============================================================ */
+/* app.js — CHAMADA (manual de próximos; sem rotação automática)
+   Regras:
+   - Salvar chamada NÃO mexe em rotacao
+   - Próximos são definidos manualmente por botões (upsert em rotacao)
+*/
 
-console.log("APP.JS CARREGADO: 2026-02-07-a");
+const SUPABASE_URL = window.__SUPABASE_URL__;
+const SUPABASE_ANON_KEY = window.__SUPABASE_ANON_KEY__;
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-/* ====== SUPABASE ====== */
-const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co";
-const SUPABASE_ANON_KEY =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5vdXp6eXJldnlrZG1ucWlmamp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUzOTYzMDIsImV4cCI6MjA4MDk3MjMwMn0.s2OzeSXe7CrKDNl6fXkTcMj_Vgitod0l0h0BiJA79nc";
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
-function headersJson(prefer = "return=representation") {
-  return {
-    apikey: SUPABASE_ANON_KEY,
-    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-    "Content-Type": "application/json",
-    Prefer: prefer,
+/* ====== Estado ====== */
+let state = {
+  tab: "chamada",
+  date: new Date().toISOString().slice(0, 10),
+
+  mediums: [],            // tabela mediums
+  mediumsById: new Map(),
+
+  chamados: [],           // registros da chamada do dia
+  chamadosByKey: new Map(), // key: `${date}:${medium_id}` => row
+
+  rotacao: [],            // tabela rotacao (agora = "proximos" manuais)
+  rotacaoByGroup: new Map(), // group_type => last_medium_id
+
+  filtros: {
+    incluirCarencia: true,
+    incluirDirigente: true,
+    incluirIncorporacao: true,
+    incluirDesenvolvimento: true,
+  },
+
+  msgs: { ok: "", err: "" }
+};
+
+/* ====== Helpers ====== */
+function setMsg(ok = "", err = "") {
+  state.msgs.ok = ok;
+  state.msgs.err = err;
+  $("#msgOk").textContent = ok || "";
+  $("#msgErr").textContent = err || "";
+}
+
+function groupOrder(g) {
+  // ordem visual
+  const map = {
+    carencia: 1,
+    desenvolvimento: 2,
+    dirigente: 3,
+    incorporacao: 4
   };
+  return map[g] ?? 99;
 }
 
-async function sbGet(path) {
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, { headers: headersJson() });
-  const t = await r.text();
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}: ${t}`);
-  return t ? JSON.parse(t) : [];
+function humanGroup(g) {
+  const map = {
+    carencia: "Carência",
+    desenvolvimento: "Desenvolvimento",
+    dirigente: "Dirigente",
+    incorporacao: "Incorporação",
+  };
+  return map[g] || g;
 }
 
-async function sbPost(path, body, prefer = "return=minimal") {
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-    method: "POST",
-    headers: headersJson(prefer),
-    body: JSON.stringify(body),
-  });
-  const t = await r.text();
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}: ${t}`);
-  return t ? JSON.parse(t) : [];
+function rotacaoKeyToHuman(gt) {
+  const map = {
+    mesa_desenvolvimento: "Mesa (Desenvolvimento)",
+    mesa_dirigente: "Mesa (Dirigente)",
+    mesa_incorporacao: "Mesa (Incorporação)",
+    psicografia: "Psicografia",
+  };
+  return map[gt] || gt;
 }
 
-async function sbPatch(path, body, prefer = "return=minimal") {
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
-    method: "PATCH",
-    headers: headersJson(prefer),
-    body: JSON.stringify(body),
-  });
-  const t = await r.text();
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}: ${t}`);
-  return t ? JSON.parse(t) : [];
+function safeNameById(id) {
+  const m = state.mediumsById.get(id);
+  return m ? m.name : "(não definido)";
 }
 
-/* Upsert de chamadas por conflito medium_id,data (precisa unique no banco) */
-async function sbUpsertChamadas(rows) {
-  const r = await fetch(`${SUPABASE_URL}/rest/v1/chamadas?on_conflict=medium_id,data`, {
-    method: "POST",
-    headers: {
-      ...headersJson("resolution=merge-duplicates,return=minimal"),
-    },
-    body: JSON.stringify(rows),
-  });
-  const t = await r.text();
-  if (!r.ok) throw new Error(`${r.status} ${r.statusText}: ${t}`);
-  return true;
+/* ====== UI: Tabs ====== */
+function setTab(tab) {
+  state.tab = tab;
+  $$(".tabBtn").forEach(b => b.classList.toggle("active", b.dataset.tab === tab));
+  $$(".tabPage").forEach(p => p.classList.toggle("active", p.id === `page_${tab}`));
 }
 
-/* ====== DOM ====== */
-const $ = (id) => document.getElementById(id);
-function must(id) {
-  const e = $(id);
-  if (!e) throw new Error(`ID NAO ENCONTRADO NO HTML: ${id}`);
-  return e;
-}
-
-/* Tabs */
-const tabChamada = must("tabChamada");
-const tabParticipantes = must("tabParticipantes");
-const viewChamada = must("viewChamada");
-const viewParticipantes = must("viewParticipantes");
-
-/* Status */
-const statusPill = must("statusPill");
-const statusText = must("statusText");
-const msgTopo = must("msgTopo");
-const msgErro = must("msgErro");
-
-/* Chamada */
-const dataChamada = must("dataChamada");
-const btnVerificar = must("btnVerificar");
-const btnSalvar = must("btnSalvar");
-const btnImprimirProxima = must("btnImprimirProxima");
-
-const resumoGeral = must("resumoGeral");
-const reservasMesa = must("reservasMesa");
-
-/* Proximos */
-const nextMesaDirigenteName = must("nextMesaDirigenteName");
-const nextPsicoDirigenteName = must("nextPsicoDirigenteName");
-const nextMesaIncorpName = must("nextMesaIncorpName");
-const nextMesaDesenvName = must("nextMesaDesenvName");
-
-/* Listas */
-const listaDirigentes = must("listaDirigentes");
-const listaIncorporacao = must("listaIncorporacao");
-const listaDesenvolvimento = must("listaDesenvolvimento");
-const listaCarencia = must("listaCarencia");
-
-/* Participantes */
-const partFiltroGrupo = must("partFiltroGrupo");
-const partBusca = must("partBusca");
-const btnRecarregarParticipantes = must("btnRecarregarParticipantes");
-const listaParticipantes = must("listaParticipantes");
-const partMsg = must("partMsg");
-const partErr = must("partErr");
-
-const novoNome = must("novoNome");
-const novoGrupo = must("novoGrupo");
-const novoAtivo = must("novoAtivo");
-const novoMesa = must("novoMesa");
-const novoPsico = must("novoPsico");
-const btnAdicionarParticipante = must("btnAdicionarParticipante");
-
-/* ====== ESTADO ====== */
-let mediumsAll = [];
-let rotacao = {
-  mesa_dirigente: null,
-  mesa_incorporacao: null,
-  mesa_desenvolvimento: null,
-  psicografia: null,
-};
-let currentDateISO = null;
-
-let chamadasMap = new Map();
-
-// MU (Último da Mesa) - somente para incorporação e desenvolvimento
-let ultimoMesaById = new Map(); // medium_id -> boolean
-
-/* timestamps de clique: fallback */
-const tsMesa = new Map();
-const tsPsico = new Map();
-
-/* targets calculados a partir da rotacao */
-let nextTargets = {
-  mesa_dirigente: null,
-  mesa_incorporacao: null,
-  mesa_desenvolvimento: null,
-  psicografia: null,
-};
-
-/* ====== UI helpers ====== */
-function setOk(msg = "") { msgTopo.textContent = msg; msgErro.textContent = ""; }
-function setErro(msg = "") { msgErro.textContent = msg; }
-function setConn(ok, msg) { statusText.textContent = msg; }
-
-function pOk(msg = "") { partMsg.textContent = msg; partErr.textContent = ""; }
-function pErr(msg = "") { partErr.textContent = msg; partMsg.textContent = ""; }
-
-function nameOf(m) { return m.name ?? m.nome ?? "(sem nome)"; }
-function numOrInf(v) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
-}
-
-/* ORDENACAO CORRETA: fila por ordem_grupo / sort_order / nome */
-function byQueue(a, b) {
-  const ag = numOrInf(a.ordem_grupo);
-  const bg = numOrInf(b.ordem_grupo);
-  if (ag !== bg) return ag - bg;
-
-  const as = numOrInf(a.sort_order);
-  const bs = numOrInf(b.sort_order);
-  if (as !== bs) return as - bs;
-
-  return nameOf(a).localeCompare(nameOf(b), "pt-BR", { sensitivity: "base" });
-}
-
-function eligible(group_type) {
-  return mediumsAll
-    .filter((m) => m.active === true && m.group_type === group_type)
-    .slice()
-    .sort(byQueue);
-}
-
-/* regra: todo dirigente pode psicografar */
-function eligiblePsicoDirigentes() {
-  return eligible("dirigente");
-}
-
-/* ====== ROTACAO ====== */
-function computeNext(list, lastId) {
-  if (!list.length) return null;
-  if (!lastId) return list[0];
-  const idx = list.findIndex((x) => x.id === lastId);
-  if (idx === -1) return list[0];
-  return list[(idx + 1) % list.length];
-}
-
-function computeNextSkip(list, lastId, skipId) {
-  if (!list.length) return null;
-  let n = computeNext(list, lastId);
-  if (!skipId || list.length === 1) return n;
-  if (n && n.id === skipId) n = computeNext(list, n.id);
-  return n;
-}
-
-function pickLastClicked(ids, tsMap) {
-  let bestId = null;
-  let bestTs = -1;
-  for (const id of ids) {
-    const ts = tsMap.get(id);
-    if (typeof ts === "number" && ts > bestTs) {
-      bestTs = ts;
-      bestId = id;
-    }
-  }
-  if (!bestId && ids.length) bestId = ids[ids.length - 1];
-  return bestId;
-}
-
-/* ====== LOAD ====== */
+/* ====== Loaders ====== */
 async function loadMediums() {
-  // IMPORTANTISSIMO: trazer ordem_grupo e sort_order
-  mediumsAll = await sbGet(
-    "mediums?select=id,name,group_type,active,presencas,faltas,mesa,psicografia,ordem_grupo,sort_order"
+  const { data, error } = await sb
+    .from("mediums")
+    .select("*")
+    .order("name", { ascending: true });
+
+  if (error) throw error;
+  state.mediums = data || [];
+  state.mediumsById = new Map(state.mediums.map(m => [m.id, m]));
+}
+
+async function loadChamadas(date) {
+  const { data, error } = await sb
+    .from("chamadas")
+    .select("*")
+    .eq("data", date);
+
+  if (error) throw error;
+
+  state.chamados = data || [];
+  state.chamadosByKey = new Map(
+    state.chamados.map(r => [`${r.data}:${r.medium_id}`, r])
   );
 }
 
 async function loadRotacao() {
-  const rows = await sbGet("rotacao?select=group_type,last_medium_id");
-  rotacao = {
-    mesa_dirigente: null,
-    mesa_incorporacao: null,
-    mesa_desenvolvimento: null,
-    psicografia: null,
-  };
-  for (const r of rows) {
-    if (Object.prototype.hasOwnProperty.call(rotacao, r.group_type)) {
-      rotacao[r.group_type] = r.last_medium_id || null;
-    }
-  }
+  const { data, error } = await sb
+    .from("rotacao")
+    .select("*");
+
+  if (error) throw error;
+
+  state.rotacao = data || [];
+  state.rotacaoByGroup = new Map(
+    state.rotacao.map(r => [r.group_type, r.last_medium_id])
+  );
 }
 
-async function loadChamadasForDate(iso) {
-  chamadasMap = new Map();
-  tsMesa.clear();
-  tsPsico.clear();
-  ultimoMesaById = new Map();
-
-  const rows = await sbGet(`chamadas?select=medium_id,status,is_ultimo_mesa&data=eq.${iso}`);
-  for (const r of rows) {
-    const st = (r.status || "").toUpperCase();
-    chamadasMap.set(r.medium_id, st);
-    ultimoMesaById.set(r.medium_id, !!r.is_ultimo_mesa);
-  }
-}
-
-/* ====== PROXIMOS / TARGETS ====== */
-function computeTargetsFromRotacao() {
-  const dir = eligible("dirigente");
-  const inc = eligible("incorporacao");
-  const des = eligible("desenvolvimento");
-  const ps  = eligiblePsicoDirigentes();
-
-  const nextMesaDir = computeNext(dir, rotacao.mesa_dirigente);
-  const nextMesaInc = computeNext(inc, rotacao.mesa_incorporacao);
-  const nextMesaDes = computeNext(des, rotacao.mesa_desenvolvimento);
-
-  const nextPsico = computeNextSkip(ps, rotacao.psicografia, nextMesaDir ? nextMesaDir.id : null);
-
-  nextTargets = {
-    mesa_dirigente: nextMesaDir ? nextMesaDir.id : null,
-    mesa_incorporacao: nextMesaInc ? nextMesaInc.id : null,
-    mesa_desenvolvimento: nextMesaDes ? nextMesaDes.id : null,
-    psicografia: nextPsico ? nextPsico.id : null,
-  };
-
-  return { nextMesaDir, nextMesaInc, nextMesaDes, nextPsico };
-}
-
+/* ====== Render: Próximos (manual) ====== */
 function renderProximos() {
-  const { nextMesaDir, nextMesaInc, nextMesaDes, nextPsico } = computeTargetsFromRotacao();
+  // Mostra exatamente o que está gravado em rotacao
+  const targets = [
+    { group_type: "mesa_desenvolvimento", label: "Mesa (Desenvolvimento)" },
+    { group_type: "mesa_dirigente", label: "Mesa (Dirigente)" },
+    { group_type: "mesa_incorporacao", label: "Mesa (Incorporação)" },
+    { group_type: "psicografia", label: "Psicografia" },
+  ];
 
-  nextMesaDirigenteName.textContent = nextMesaDir ? nameOf(nextMesaDir) : "—";
-  nextMesaIncorpName.textContent    = nextMesaInc ? nameOf(nextMesaInc) : "—";
-  nextMesaDesenvName.textContent    = nextMesaDes ? nameOf(nextMesaDes) : "—";
-  nextPsicoDirigenteName.textContent= nextPsico ? nameOf(nextPsico) : "—";
+  const box = $("#nextGrid");
+  box.innerHTML = "";
+
+  targets.forEach(t => {
+    const id = state.rotacaoByGroup.get(t.group_type);
+    const name = id ? safeNameById(id) : "(não definido)";
+
+    const card = document.createElement("div");
+    card.className = "miniCard";
+    card.innerHTML = `
+      <div class="miniTitle">${t.label}</div>
+      <div class="miniValue">${name}</div>
+    `;
+    box.appendChild(card);
+  });
+
+  $("#hintNext").textContent =
+    "Modo MANUAL: ao terminar a chamada, use os botões “Próx.” para definir quem será o próximo em cada grupo. Salvar a chamada NÃO altera mais isso.";
 }
 
-/* ====== RESUMO ====== */
-function renderResumo() {
-  const active = mediumsAll.filter((m) => m.active === true);
-
-  let p = 0, m = 0, f = 0, ps = 0;
-  const mesa = [];
-
-  for (const med of active) {
-    const st = (chamadasMap.get(med.id) || "").toUpperCase();
-    if (st === "P") p++;
-    if (st === "M") { m++; mesa.push(nameOf(med)); }
-    if (st === "F") f++;
-    if (st === "PS") ps++;
-  }
-
-  const total = p + m + f;
-  const presPct = total ? Math.round(((p + m) / total) * 100) : 0;
-  const faltPct = total ? Math.round((f / total) * 100) : 0;
-
-  resumoGeral.textContent = `P:${p} M:${m} F:${f} PS:${ps} | Presença:${presPct}% | Faltas:${faltPct}%`;
-  reservasMesa.textContent = mesa.length ? mesa.join(", ") : "—";
+/* ====== Render: Lista da chamada ====== */
+function getRowStatus(date, medium_id) {
+  const r = state.chamadosByKey.get(`${date}:${medium_id}`);
+  return r ? r.status : "P"; // default P
 }
 
-/* ====== LISTA / RADIOS ====== */
-function buildStatusOptions(m) {
-  const base = ["P", "M", "F"];
-  if (m.group_type === "dirigente") base.push("PS");
-  return base;
-}
-
-function isMesaMultiGroup(group_type) {
-  return group_type === "incorporacao" || group_type === "desenvolvimento";
-}
-
-function setUltimoMesaExclusive(group_type, chosenId) {
-  // Só para incorporação e desenvolvimento
-  if (!isMesaMultiGroup(group_type)) return;
-
-  for (const m of mediumsAll) {
-    if (m.group_type === group_type) {
-      ultimoMesaById.set(m.id, m.id === chosenId);
-    }
-  }
-}
-
-function clearUltimoMesaIfNeeded(med) {
-  if (!isMesaMultiGroup(med.group_type)) return;
-  if (ultimoMesaById.get(med.id)) ultimoMesaById.set(med.id, false);
-}
-
-function enforceUniqueStatusInDirigentes(statusChar, chosenId) {
-  // Para dirigente: deve existir no máximo 1 "M" e no máximo 1 "PS" por dia.
-  for (const m of mediumsAll) {
-    if (m.group_type !== "dirigente") continue;
-    if (m.id === chosenId) continue;
-    if ((chamadasMap.get(m.id) || "").toUpperCase() === statusChar) {
-      // volta para Presente por segurança (não deixa "sem status")
-      chamadasMap.set(m.id, "P");
-    }
-  }
-}
-
-function makeRow(m) {
-  const wrap = document.createElement("div");
-  wrap.className = "itemRow";
-
-  // Destaques por "próximo"
-  const isMesaNext =
-    (m.group_type === "dirigente" && m.id === nextTargets.mesa_dirigente) ||
-    (m.group_type === "incorporacao" && m.id === nextTargets.mesa_incorporacao) ||
-    (m.group_type === "desenvolvimento" && m.id === nextTargets.mesa_desenvolvimento);
-
-  const isPsicoNext =
-    (m.group_type === "dirigente" && m.id === nextTargets.psicografia);
-
-  if (isMesaNext) wrap.classList.add("nextMesa");
-  if (isPsicoNext) wrap.classList.add("nextPsico");
-
-  const left = document.createElement("div");
-  left.className = "itemLeft";
-
-  const title = document.createElement("div");
-  title.className = "itemName";
-  title.textContent = nameOf(m);
-
-  const pres = Number(m.presencas || 0);
-  const falt = Number(m.faltas || 0);
-  const denom = pres + falt;
-  const presPct = denom ? Math.round((pres / denom) * 100) : 0;
-  const faltPct = denom ? Math.round((falt / denom) * 100) : 0;
-
-  const meta = document.createElement("div");
-  meta.className = "itemMeta";
-  meta.textContent = `Presenças: ${pres} | Faltas: ${falt} | Presença: ${presPct}% | Faltas: ${faltPct}%`;
-
-  left.appendChild(title);
-  left.appendChild(meta);
-
-  const right = document.createElement("div");
-  right.className = "itemRight";
-
-  const radios = document.createElement("div");
-  radios.className = "radioGroup";
-
-  const current = (chamadasMap.get(m.id) || "").toUpperCase();
-
-  for (const s of buildStatusOptions(m)) {
-    const rid = `r_${m.id}_${s}`;
-
-    const inp = document.createElement("input");
-    inp.type = "radio";
-    inp.name = `st_${m.id}`;
-    inp.id = rid;
-    inp.value = s;
-    inp.checked = current === s;
-
-    const lbl = document.createElement("label");
-    lbl.className = "radioLbl";
-    lbl.setAttribute("for", rid);
-
-    const dot = document.createElement("span");
-    dot.className = "dot";
-    const txt = document.createElement("span");
-    txt.className = "radioTxt";
-    txt.textContent = s;
-
-    lbl.appendChild(dot);
-    lbl.appendChild(txt);
-
-    inp.addEventListener("change", () => {
-      if (!currentDateISO) {
-        setErro("Selecione a data e clique em Verificar data.");
-        return;
-      }
-
-      // 1) Atualiza status no mapa
-      chamadasMap.set(m.id, s);
-
-      // 2) Regras de unicidade (dirigentes)
-      if (m.group_type === "dirigente" && s === "M") enforceUniqueStatusInDirigentes("M", m.id);
-      if (m.group_type === "dirigente" && s === "PS") enforceUniqueStatusInDirigentes("PS", m.id);
-
-      // 3) MU (Último da Mesa) — só incorp/desenv
-      if (isMesaMultiGroup(m.group_type) && s !== "M") {
-        clearUltimoMesaIfNeeded(m);
-      }
-
-      // 4) fallback timestamps
-      if (s === "M") tsMesa.set(m.id, Date.now()); else tsMesa.delete(m.id);
-      if (s === "PS") tsPsico.set(m.id, Date.now()); else tsPsico.delete(m.id);
-
-      renderChamada();
+function setLocalStatus(date, medium_id, status) {
+  const key = `${date}:${medium_id}`;
+  const existing = state.chamadosByKey.get(key);
+  if (existing) {
+    existing.status = status;
+  } else {
+    state.chamadosByKey.set(key, {
+      data: date,
+      medium_id,
+      status,
+      is_ultimo_mesa: false
     });
-
-    radios.appendChild(inp);
-    radios.appendChild(lbl);
-  }
-
-  right.appendChild(radios);
-
-  // Botão ⭐ MU (Último da Mesa) — só incorporação e desenvolvimento
-  if (isMesaMultiGroup(m.group_type)) {
-    const stNow = (chamadasMap.get(m.id) || "").toUpperCase();
-    const star = document.createElement("button");
-    star.type = "button";
-    star.className = "starBtn" + (ultimoMesaById.get(m.id) ? " on" : "");
-    star.textContent = "★";
-    star.title = "Definir como ÚLTIMO da mesa (MU) para rotacionar corretamente";
-
-    star.disabled = stNow !== "M";
-
-    star.addEventListener("click", () => {
-      if (!currentDateISO) {
-        setErro("Selecione a data e clique em Verificar data.");
-        return;
-      }
-      const st = (chamadasMap.get(m.id) || "").toUpperCase();
-      if (st !== "M") {
-        setErro("MU só pode ser marcado em quem está como M (mesa).");
-        return;
-      }
-      setUltimoMesaExclusive(m.group_type, m.id);
-      renderChamada();
-    });
-
-    right.appendChild(star);
-  }
-
-  wrap.appendChild(left);
-  wrap.appendChild(right);
-  return wrap;
-}
-
-function renderChamada() {
-  listaDirigentes.innerHTML = "";
-  listaIncorporacao.innerHTML = "";
-  listaDesenvolvimento.innerHTML = "";
-  listaCarencia.innerHTML = "";
-
-  const dir = eligible("dirigente");
-  const inc = eligible("incorporacao");
-  const des = eligible("desenvolvimento");
-  const car = eligible("carencia");
-
-  computeTargetsFromRotacao();
-
-  for (const m of dir) listaDirigentes.appendChild(makeRow(m));
-  for (const m of inc) listaIncorporacao.appendChild(makeRow(m));
-  for (const m of des) listaDesenvolvimento.appendChild(makeRow(m));
-  for (const m of car) listaCarencia.appendChild(makeRow(m));
-
-  renderResumo();
-  renderProximos();
-}
-
-/* ====== SALVAR ====== */
-async function persistRotacaoFromClicks() {
-  const active = mediumsAll.filter((m) => m.active === true);
-
-  // Dirigente: no máximo 1 M e 1 PS
-  const lastMesaDir = active
-    .filter((m) => m.group_type === "dirigente" && (chamadasMap.get(m.id) || "").toUpperCase() === "M")
-    .map((m) => m.id)[0] || null;
-
-  const lastPsico = active
-    .filter((m) => m.group_type === "dirigente" && (chamadasMap.get(m.id) || "").toUpperCase() === "PS")
-    .map((m) => m.id)[0] || null;
-
-  // Incorp/Desenv: MU é a fonte de verdade
-  const incMesaIds = active
-    .filter((m) => m.group_type === "incorporacao" && (chamadasMap.get(m.id) || "").toUpperCase() === "M")
-    .map((m) => m.id);
-
-  const desMesaIds = active
-    .filter((m) => m.group_type === "desenvolvimento" && (chamadasMap.get(m.id) || "").toUpperCase() === "M")
-    .map((m) => m.id);
-
-  const lastMesaInc =
-    incMesaIds.find((id) => ultimoMesaById.get(id) === true) ||
-    pickLastClicked(incMesaIds, tsMesa) ||
-    null;
-
-  const lastMesaDes =
-    desMesaIds.find((id) => ultimoMesaById.get(id) === true) ||
-    pickLastClicked(desMesaIds, tsMesa) ||
-    null;
-
-  // Segurança: não permitir mesma pessoa em mesa_dirigente e psicografia
-  let psicoFinal = lastPsico;
-  if (lastMesaDir && psicoFinal && lastMesaDir === psicoFinal) {
-    const psList = eligiblePsicoDirigentes();
-    psicoFinal = computeNextSkip(psList, psicoFinal, lastMesaDir)?.id || psicoFinal;
-  }
-
-  if (lastMesaDir) await sbPatch(`rotacao?group_type=eq.mesa_dirigente`, { last_medium_id: lastMesaDir });
-  if (lastMesaInc) await sbPatch(`rotacao?group_type=eq.mesa_incorporacao`, { last_medium_id: lastMesaInc });
-  if (lastMesaDes) await sbPatch(`rotacao?group_type=eq.mesa_desenvolvimento`, { last_medium_id: lastMesaDes });
-  if (psicoFinal)  await sbPatch(`rotacao?group_type=eq.psicografia`, { last_medium_id: psicoFinal });
-}
-
-async function onSalvarTudo() {
-  if (!currentDateISO) return setErro("Selecione a data e clique em Verificar data.");
-
-  try {
-    const active = mediumsAll.filter((m) => m.active === true);
-
-    // ===== Validação MU =====
-    const incMesa = active.filter((m) => m.group_type === "incorporacao" && (chamadasMap.get(m.id) || "").toUpperCase() === "M");
-    const desMesa = active.filter((m) => m.group_type === "desenvolvimento" && (chamadasMap.get(m.id) || "").toUpperCase() === "M");
-
-    const incMU = incMesa.filter((m) => ultimoMesaById.get(m.id) === true);
-    const desMU = desMesa.filter((m) => ultimoMesaById.get(m.id) === true);
-
-    if (incMesa.length > 0 && incMU.length !== 1) {
-      return setErro("Incorporação: marque exatamente 1 ⭐ (MU) entre os que estão como M.");
-    }
-    if (desMesa.length > 0 && desMU.length !== 1) {
-      return setErro("Desenvolvimento: marque exatamente 1 ⭐ (MU) entre os que estão como M.");
-    }
-
-    // ===== Salva chamada (inclui is_ultimo_mesa) =====
-    const rows = [];
-    for (const m of active) {
-      const st = (chamadasMap.get(m.id) || "").toUpperCase();
-      if (!["P", "M", "F", "PS"].includes(st)) continue;
-
-      const isUltimoMesa =
-        (m.group_type === "incorporacao" || m.group_type === "desenvolvimento")
-          ? (st === "M" && ultimoMesaById.get(m.id) === true)
-          : false;
-
-      rows.push({
-        medium_id: m.id,
-        data: currentDateISO,
-        status: st,
-        is_ultimo_mesa: isUltimoMesa
-      });
-    }
-
-    if (rows.length) await sbUpsertChamadas(rows);
-
-    await persistRotacaoFromClicks();
-    await loadRotacao();
-    renderChamada();
-
-    setOk("Chamada salva. MU gravado (incorp/desenv) e rotação atualizada corretamente.");
-  } catch (e) {
-    setErro("Erro ao salvar: " + e.message);
   }
 }
 
-/* ====== VERIFICAR DATA ====== */
-async function onVerificar() {
-  setErro("");
-  const iso = (dataChamada.value || "").trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return setErro("Data inválida.");
-  currentDateISO = iso;
-  await loadChamadasForDate(iso);
-  setOk(`Data carregada: ${iso}`);
-  renderChamada();
-}
-
-/* ====== PARTICIPANTES ====== */
-function matchesFilter(m) {
-  const g = (partFiltroGrupo.value || "").trim();
-  const q = (partBusca.value || "").trim().toLowerCase();
-  if (g && m.group_type !== g) return false;
-  if (q && !nameOf(m).toLowerCase().includes(q)) return false;
+function shouldShowGroup(g) {
+  if (g === "carencia") return state.filtros.incluirCarencia;
+  if (g === "desenvolvimento") return state.filtros.incluirDesenvolvimento;
+  if (g === "dirigente") return state.filtros.incluirDirigente;
+  if (g === "incorporacao") return state.filtros.incluirIncorporacao;
   return true;
 }
 
-function renderParticipants() {
-  listaParticipantes.innerHTML = "";
-  const filtered = mediumsAll.filter(matchesFilter).sort(byQueue);
+/* ---- Definir próximos manualmente (upsert em rotacao) ---- */
+async function setProximo(group_type, medium_id) {
+  setMsg("", "");
+  try {
+    const payload = { group_type, last_medium_id: medium_id };
 
-  if (!filtered.length) {
-    const div = document.createElement("div");
-    div.className = "empty";
-    div.textContent = "Nenhum participante encontrado.";
-    listaParticipantes.appendChild(div);
-    return;
+    const { error } = await sb
+      .from("rotacao")
+      .upsert(payload, { onConflict: "group_type" });
+
+    if (error) throw error;
+
+    // atualiza estado local
+    state.rotacaoByGroup.set(group_type, medium_id);
+
+    renderProximos();
+    renderChamadaList(); // para destacar na lista
+    setMsg(`Próximo definido: ${rotacaoKeyToHuman(group_type)} → ${safeNameById(medium_id)}`, "");
+  } catch (e) {
+    setMsg("", `Erro ao definir próximo: ${e.message || e}`);
   }
+}
 
-  for (const m of filtered) {
+function renderChamadaList() {
+  const list = $("#chamadaList");
+  list.innerHTML = "";
+
+  const date = state.date;
+
+  // ordena por grupo e nome
+  const sorted = [...state.mediums]
+    .filter(m => shouldShowGroup(m.group_type))
+    .sort((a, b) => {
+      const ga = groupOrder(a.group_type);
+      const gb = groupOrder(b.group_type);
+      if (ga !== gb) return ga - gb;
+      return (a.name || "").localeCompare(b.name || "", "pt-BR", { sensitivity: "base" });
+    });
+
+  // mapas de "proximos" para destaque
+  const nextMesaDev = state.rotacaoByGroup.get("mesa_desenvolvimento");
+  const nextMesaDir = state.rotacaoByGroup.get("mesa_dirigente");
+  const nextMesaInc = state.rotacaoByGroup.get("mesa_incorporacao");
+  const nextPsico = state.rotacaoByGroup.get("psicografia");
+
+  // cria seções por grupo
+  let currentGroup = null;
+
+  sorted.forEach(m => {
+    if (m.group_type !== currentGroup) {
+      currentGroup = m.group_type;
+      const h = document.createElement("div");
+      h.className = "sectionTitle";
+      h.textContent = humanGroup(currentGroup);
+      list.appendChild(h);
+    }
+
+    const status = getRowStatus(date, m.id);
+
     const row = document.createElement("div");
     row.className = "itemRow";
 
-    const left = document.createElement("div");
-    left.className = "itemLeft";
-    left.innerHTML = `
-      <div class="itemName">${nameOf(m)}</div>
-      <div class="itemMeta">Grupo: ${m.group_type} | Ativo: ${m.active ? "Sim" : "Não"} | Ordem: ${m.ordem_grupo ?? "-"} / ${m.sort_order ?? "-"}</div>
+    // destaque: próximo mesa/psico conforme grupo
+    if (m.group_type === "desenvolvimento" && nextMesaDev === m.id) row.classList.add("nextMesa");
+    if (m.group_type === "dirigente" && nextMesaDir === m.id) row.classList.add("nextMesa");
+    if (m.group_type === "incorporacao" && nextMesaInc === m.id) row.classList.add("nextMesa");
+    if (m.group_type === "dirigente" && nextPsico === m.id) row.classList.add("nextPsico");
+
+    row.innerHTML = `
+      <div class="itemLeft">
+        <div class="itemName">${m.name}</div>
+        <div class="itemMeta">${humanGroup(m.group_type)}</div>
+      </div>
+
+      <div class="itemRight">
+        <div class="radioGroup" data-mid="${m.id}">
+          ${renderRadio(m.id, "P", "P")}
+          ${renderRadio(m.id, "F", "F")}
+          ${renderRadio(m.id, "M", "M")}
+          ${m.group_type === "dirigente" ? renderRadio(m.id, "PS", "PS") : ""}
+        </div>
+
+        ${renderProximoButtons(m)}
+      </div>
     `;
 
-    const right = document.createElement("div");
-    right.className = "itemRight";
+    list.appendChild(row);
 
-    // Botão "X" (soft delete): desativa para sumir do front sem quebrar histórico
-    const btnX = document.createElement("button");
-    btnX.className = "btn danger small";
-    btnX.type = "button";
-    btnX.textContent = "X";
-    btnX.title = "Remover (desativar) participante";
+    // set radio checked
+    const group = row.querySelector(`.radioGroup[data-mid="${m.id}"]`);
+    const input = group.querySelector(`input[value="${status}"]`);
+    if (input) input.checked = true;
 
-    btnX.disabled = !m.active;
-    btnX.addEventListener("click", async () => {
-      const ok = confirm(`Remover (desativar) o participante "${nameOf(m)}"?\n\nIsso NÃO apaga chamadas antigas, apenas desativa para não aparecer no front.`);
-      if (!ok) return;
-
-      try {
-        await sbPatch(`mediums?id=eq.${m.id}`, { active: false });
-        pOk(`Participante removido (desativado): ${nameOf(m)}`);
-        await reloadParticipants();
-      } catch (e) {
-        pErr("Erro ao remover: " + e.message);
-      }
+    // events radio
+    group.querySelectorAll("input").forEach(inp => {
+      inp.addEventListener("change", () => {
+        setLocalStatus(date, m.id, inp.value);
+      });
     });
 
-    right.appendChild(btnX);
+    // events próximos
+    const btnMesa = row.querySelector(`[data-action="setNextMesa"]`);
+    if (btnMesa) {
+      btnMesa.addEventListener("click", async () => {
+        const gt =
+          m.group_type === "desenvolvimento" ? "mesa_desenvolvimento" :
+          m.group_type === "dirigente" ? "mesa_dirigente" :
+          m.group_type === "incorporacao" ? "mesa_incorporacao" :
+          null;
+        if (!gt) return;
+        await setProximo(gt, m.id);
+      });
+    }
 
-    row.appendChild(left);
-    row.appendChild(right);
-    listaParticipantes.appendChild(row);
-  }
-}
-
-async function reloadParticipants() {
-  await loadMediums();
-  renderParticipants();
-  renderChamada();
-}
-
-async function onAdicionarParticipante() {
-  pOk(""); pErr("");
-
-  const name = (novoNome.value || "").trim();
-  const group_type = (novoGrupo.value || "").trim();
-  const active = !!novoAtivo.checked;
-
-  if (!name) return pErr("Informe o nome.");
-  if (!group_type) return pErr("Informe o grupo.");
-
-  try {
-    await sbPost("mediums", [{
-      name,
-      group_type,
-      active,
-      mesa: novoMesa.checked ? 1 : 0,
-      psicografia: novoPsico.checked ? 1 : 0,
-      presencas: 0,
-      faltas: 0,
-      ordem_grupo: null,
-      sort_order: null
-    }], "return=minimal");
-
-    pOk("Participante adicionado.");
-    novoNome.value = "";
-    novoMesa.checked = false;
-    novoPsico.checked = false;
-    novoAtivo.checked = true;
-
-    await reloadParticipants();
-  } catch (e) {
-    pErr("Erro ao adicionar: " + e.message);
-  }
-}
-
-/* ====== IMPRIMIR PRÓXIMA CHAMADA ====== */
-function pad2(n){ return String(n).padStart(2,"0"); }
-function toISODate(d){
-  return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}`;
-}
-function nextTuesdayFrom(date){
-  const d = new Date(date);
-  const day = d.getDay(); // 0 dom .. 2 ter
-  const diff = (2 - day + 7) % 7;
-  d.setDate(d.getDate() + (diff === 0 ? 7 : diff));
-  d.setHours(0,0,0,0);
-  return d;
-}
-function escapeHtml(s){
-  return (s||"")
-    .replaceAll("&","&amp;")
-    .replaceAll("<","&lt;")
-    .replaceAll(">","&gt;");
-}
-function buildPrintDoc(dateISO) {
-  const { nextMesaDir, nextMesaInc, nextMesaDes, nextPsico } = computeTargetsFromRotacao();
-
-  const dir = eligible("dirigente");
-  const inc = eligible("incorporacao");
-  const des = eligible("desenvolvimento");
-
-  const html = `
-  <html>
-    <head>
-      <meta charset="utf-8"/>
-      <title>Chamada ${dateISO}</title>
-      <style>
-        body{font-family:Arial,Helvetica,sans-serif;margin:24px}
-        h1{margin:0 0 10px}
-        .muted{color:#555;margin-bottom:18px}
-        .box{border:1px solid #222;border-radius:10px;padding:12px;margin:10px 0}
-        .row{display:flex;justify-content:space-between;gap:10px}
-        .k{font-weight:700}
-      </style>
-    </head>
-    <body>
-      <h1>Chamada - ${dateISO}</h1>
-      <div class="muted">Plano de reserva (caso o app falhe):</div>
-
-      <div class="box">
-        <div class="row"><div class="k">Dirigente (Mesa)</div><div>${escapeHtml(nextMesaDir ? nextMesaDir.name : "—")}</div></div>
-        <div class="row"><div class="k">Dirigente (Psicografia)</div><div>${escapeHtml(nextPsico ? nextPsico.name : "—")}</div></div>
-      </div>
-
-      <div class="box">
-        <div class="k">Incorporação (Mesa) - próximo</div>
-        <div>${escapeHtml(nextMesaInc ? nextMesaInc.name : "—")}</div>
-      </div>
-
-      <div class="box">
-        <div class="k">Desenvolvimento (Mesa) - próximo</div>
-        <div>${escapeHtml(nextMesaDes ? nextMesaDes.name : "—")}</div>
-      </div>
-
-      <div class="muted" style="margin-top:20px">
-        Obs.: Para rotação perfeita em Incorp/Desenv, marque ⭐ MU (Último da Mesa) no 4º "M".
-      </div>
-    </body>
-  </html>`;
-  return html;
-}
-function onImprimirProxima() {
-  const base = currentDateISO ? new Date(currentDateISO + "T00:00:00") : new Date();
-  const nextTue = nextTuesdayFrom(base);
-  const iso = toISODate(nextTue);
-
-  const w = window.open("", "_blank");
-  if (!w) return setErro("Pop-up bloqueado. Libere pop-ups para imprimir.");
-  w.document.open();
-  w.document.write(buildPrintDoc(iso));
-  w.document.close();
-  w.focus();
-  w.print();
-}
-
-/* ====== TABS ====== */
-function showTab(which) {
-  const isChamada = which === "chamada";
-  viewChamada.style.display = isChamada ? "" : "none";
-  viewParticipantes.style.display = isChamada ? "none" : "";
-  tabChamada.classList.toggle("active", isChamada);
-  tabParticipantes.classList.toggle("active", !isChamada);
-  if (!isChamada) renderParticipants();
-}
-
-/* ====== INIT ====== */
-(async function init() {
-  try {
-    setConn(false, "Conectando...");
-    await sbGet("rotacao?select=group_type,last_medium_id&limit=1");
-    setConn(true, "Supabase OK");
-
-    await loadMediums();
-    await loadRotacao();
-
-    setOk("Selecione a data e clique em Verificar data.");
-    renderChamada();
-    renderParticipants();
-  } catch (e) {
-    setConn(false, "Erro");
-    setErro("Falha ao conectar: " + e.message);
-  }
-
-  btnVerificar.addEventListener("click", onVerificar);
-  btnSalvar.addEventListener("click", onSalvarTudo);
-  btnImprimirProxima.addEventListener("click", onImprimirProxima);
-
-  tabChamada.addEventListener("click", () => showTab("chamada"));
-  tabParticipantes.addEventListener("click", () => showTab("participantes"));
-
-  btnRecarregarParticipantes.addEventListener("click", async () => {
-    try { await reloadParticipants(); pOk("Recarregado."); }
-    catch (e) { pErr("Erro ao recarregar: " + e.message); }
+    const btnPsico = row.querySelector(`[data-action="setNextPsico"]`);
+    if (btnPsico) {
+      btnPsico.addEventListener("click", async () => {
+        await setProximo("psicografia", m.id);
+      });
+    }
   });
 
-  partFiltroGrupo.addEventListener("change", renderParticipants);
-  partBusca.addEventListener("input", renderParticipants);
+  if (!sorted.length) {
+    list.innerHTML = `<div class="empty">Nenhum participante para mostrar (verifique filtros).</div>`;
+  }
+}
 
-  btnAdicionarParticipante.addEventListener("click", onAdicionarParticipante);
-})();
+function renderRadio(mid, value, label) {
+  const id = `r_${mid}_${value}`;
+  return `
+    <input type="radio" id="${id}" name="st_${mid}" value="${value}">
+    <label class="radioLbl" for="${id}">
+      <span class="dot"></span>
+      <span class="radioTxt">${label}</span>
+    </label>
+  `;
+}
+
+function renderProximoButtons(m) {
+  // carencia não participa de "próximo"
+  if (m.group_type === "carencia") return "";
+
+  if (m.group_type === "dirigente") {
+    return `
+      <button class="btn small" type="button" data-action="setNextMesa">Próx. Mesa</button>
+      <button class="btn small" type="button" data-action="setNextPsico">Próx. Psicografia</button>
+    `;
+  }
+
+  // desenvolvimento / incorporacao
+  return `<button class="btn small" type="button" data-action="setNextMesa">Próx. Mesa</button>`;
+}
+
+/* ====== Salvar chamada (sem mexer em rotacao) ====== */
+async function onSalvarTudo() {
+  setMsg("", "");
+  try {
+    const date = state.date;
+
+    // montar payloads da chamada (somente presença/falta/mesa/ps)
+    const rows = [];
+    for (const m of state.mediums) {
+      if (!shouldShowGroup(m.group_type)) continue;
+
+      const status = getRowStatus(date, m.id);
+      rows.push({
+        data: date,
+        medium_id: m.id,
+        status,
+        // is_ultimo_mesa fica irrelevante no modo manual (mantemos false)
+        is_ultimo_mesa: false
+      });
+    }
+
+    // upsert em chamadas (garante registro do dia para todos exibidos)
+    const { error } = await sb
+      .from("chamadas")
+      .upsert(rows, { onConflict: "data,medium_id" });
+
+    if (error) throw error;
+
+    setMsg("Chamada salva. (Modo MANUAL: próximos não foram alterados.)", "");
+    await loadChamadas(date); // recarrega para manter consistência
+    renderChamadaList();
+  } catch (e) {
+    setMsg("", `Erro ao salvar: ${e.message || e}`);
+  }
+}
+
+/* ====== Participantes (mantém ordenação alfabética via trigger do banco) ====== */
+async function onAddMedium() {
+  setMsg("", "");
+  const name = $("#newName").value.trim();
+  const group_type = $("#newGroup").value;
+
+  if (!name) {
+    setMsg("", "Digite o nome do participante.");
+    return;
+  }
+
+  try {
+    const { error } = await sb
+      .from("mediums")
+      .insert({ name, group_type });
+
+    if (error) throw error;
+
+    $("#newName").value = "";
+    setMsg("Participante adicionado. (O banco reordena por nome automaticamente.)", "");
+
+    await loadMediums();
+    renderChamadaList();
+    renderMediumsList();
+    renderProximos();
+  } catch (e) {
+    setMsg("", `Erro ao adicionar: ${e.message || e}`);
+  }
+}
+
+function renderMediumsList() {
+  const box = $("#mediumsList");
+  box.innerHTML = "";
+
+  const sorted = [...state.mediums].sort((a, b) => {
+    const ga = groupOrder(a.group_type);
+    const gb = groupOrder(b.group_type);
+    if (ga !== gb) return ga - gb;
+    return (a.name || "").localeCompare(b.name || "", "pt-BR", { sensitivity: "base" });
+  });
+
+  let currentGroup = null;
+  sorted.forEach(m => {
+    if (m.group_type !== currentGroup) {
+      currentGroup = m.group_type;
+      const h = document.createElement("div");
+      h.className = "sectionTitle";
+      h.textContent = humanGroup(currentGroup);
+      box.appendChild(h);
+    }
+
+    const row = document.createElement("div");
+    row.className = "itemRow";
+    row.innerHTML = `
+      <div class="itemLeft">
+        <div class="itemName">${m.name}</div>
+        <div class="itemMeta">${humanGroup(m.group_type)}</div>
+      </div>
+      <div class="itemRight">
+        <button class="btn small danger" type="button" data-del="${m.id}">Excluir</button>
+      </div>
+    `;
+    box.appendChild(row);
+
+    row.querySelector(`[data-del="${m.id}"]`).addEventListener("click", async () => {
+      await onDeleteMedium(m.id);
+    });
+  });
+
+  if (!sorted.length) box.innerHTML = `<div class="empty">Sem participantes cadastrados.</div>`;
+}
+
+async function onDeleteMedium(id) {
+  setMsg("", "");
+  try {
+    // atenção: pode quebrar chamadas antigas se tiver FK — faça conforme seu esquema
+    const { error } = await sb.from("mediums").delete().eq("id", id);
+    if (error) throw error;
+
+    setMsg("Participante excluído.", "");
+    await loadMediums();
+    renderChamadaList();
+    renderMediumsList();
+    renderProximos();
+  } catch (e) {
+    setMsg("", `Erro ao excluir: ${e.message || e}`);
+  }
+}
+
+/* ====== Init ====== */
+async function init() {
+  try {
+    // listeners
+    $$(".tabBtn").forEach(b => b.addEventListener("click", () => setTab(b.dataset.tab)));
+
+    $("#dateInput").value = state.date;
+    $("#dateInput").addEventListener("change", async () => {
+      state.date = $("#dateInput").value;
+      await loadChamadas(state.date);
+      renderChamadaList();
+    });
+
+    $("#btnSalvar").addEventListener("click", onSalvarTudo);
+
+    // filtros
+    $("#fCarencia").checked = state.filtros.incluirCarencia;
+    $("#fDirigente").checked = state.filtros.incluirDirigente;
+    $("#fIncorporacao").checked = state.filtros.incluirIncorporacao;
+    $("#fDesenvolvimento").checked = state.filtros.incluirDesenvolvimento;
+
+    $("#fCarencia").addEventListener("change", () => { state.filtros.incluirCarencia = $("#fCarencia").checked; renderChamadaList(); });
+    $("#fDirigente").addEventListener("change", () => { state.filtros.incluirDirigente = $("#fDirigente").checked; renderChamadaList(); });
+    $("#fIncorporacao").addEventListener("change", () => { state.filtros.incluirIncorporacao = $("#fIncorporacao").checked; renderChamadaList(); });
+    $("#fDesenvolvimento").addEventListener("change", () => { state.filtros.incluirDesenvolvimento = $("#fDesenvolvimento").checked; renderChamadaList(); });
+
+    // participantes
+    $("#btnAdd").addEventListener("click", onAddMedium);
+
+    // load
+    await loadMediums();
+    await loadChamadas(state.date);
+    await loadRotacao();
+
+    renderProximos();
+    renderChamadaList();
+    renderMediumsList();
+
+    setTab("chamada");
+    setMsg("OK. Modo MANUAL de próximos ativo.", "");
+  } catch (e) {
+    setMsg("", `Falha ao iniciar: ${e.message || e}`);
+  }
+}
+
+init();
