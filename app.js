@@ -17,13 +17,17 @@ console.log("APP.JS Carregado");
 const SUPABASE_URL = 'https://nouzzyrevykdmnqifjjt.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5vdXp6eXJldnlrZG1ucWlmamp0Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjUzOTYzMDIsImV4cCI6MjA4MDk3MjMwMn0.s2OzeSXe7CrKDNl6fXkTcMj_Vgitod0l0h0BiJA79nc';
 
+
+/* ===========================
+   REST HELPERS (PostgREST)
+=========================== */
 async function httpGet(path) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
     headers: {
-      apikey: SUPABASE_ANON,
-      Authorization: `Bearer ${SUPABASE_ANON}`,
-      "Content-Type": "application/json",
-    },
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      "Content-Type": "application/json"
+    }
   });
   const text = await res.text();
   if (!res.ok) throw new Error(text || `GET ${path} failed`);
@@ -32,16 +36,16 @@ async function httpGet(path) {
 
 async function httpPost(path, body, prefer) {
   const headers = {
-    apikey: SUPABASE_ANON,
-    Authorization: `Bearer ${SUPABASE_ANON}`,
-    "Content-Type": "application/json",
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    "Content-Type": "application/json"
   };
   if (prefer) headers.Prefer = prefer;
 
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
     method: "POST",
     headers,
-    body: JSON.stringify(body),
+    body: JSON.stringify(body)
   });
   const text = await res.text();
   if (!res.ok) throw new Error(text || `POST ${path} failed`);
@@ -50,16 +54,16 @@ async function httpPost(path, body, prefer) {
 
 async function httpPatch(path, body, prefer) {
   const headers = {
-    apikey: SUPABASE_ANON,
-    Authorization: `Bearer ${SUPABASE_ANON}`,
-    "Content-Type": "application/json",
+    apikey: SUPABASE_ANON_KEY,
+    Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    "Content-Type": "application/json"
   };
   if (prefer) headers.Prefer = prefer;
 
   const res = await fetch(`${SUPABASE_URL}/rest/v1/${path}`, {
     method: "PATCH",
     headers,
-    body: JSON.stringify(body),
+    body: JSON.stringify(body)
   });
   const text = await res.text();
   if (!res.ok) throw new Error(text || `PATCH ${path} failed`);
@@ -69,96 +73,84 @@ async function httpPatch(path, body, prefer) {
 /* ===========================
    DOM
 =========================== */
-const tabChamada = document.getElementById("tabChamada");
-const tabParticipantes = document.getElementById("tabParticipantes");
-const viewChamada = document.getElementById("viewChamada");
-const viewParticipantes = document.getElementById("viewParticipantes");
+const $statusPill = document.getElementById("statusPill");
+const $statusText = document.getElementById("statusText");
+const $msgTopo = document.getElementById("msgTopo");
+const $msgErro = document.getElementById("msgErro");
 
-const statusPill = document.getElementById("statusPill");
-const statusText = document.getElementById("statusText");
-const msgTopo = document.getElementById("msgTopo");
-const msgErro = document.getElementById("msgErro");
+const $dataChamada = document.getElementById("dataChamada");
+const $btnVerificar = document.getElementById("btnVerificar");
+const $btnSalvar = document.getElementById("btnSalvar");
+const $btnImprimirProxima = document.getElementById("btnImprimirProxima");
 
-const dataChamada = document.getElementById("dataChamada");
-const btnVerificar = document.getElementById("btnVerificar");
-const btnSalvar = document.getElementById("btnSalvar");
-const btnImprimirProxima = document.getElementById("btnImprimirProxima");
+const $nextMesaDirigenteName = document.getElementById("nextMesaDirigenteName");
+const $nextPsicoDirigenteName = document.getElementById("nextPsicoDirigenteName");
+const $nextMesaIncorpName = document.getElementById("nextMesaIncorpName");
+const $nextMesaDesenvName = document.getElementById("nextMesaDesenvName");
 
-const resumoGeral = document.getElementById("resumoGeral");
-const reservasMesa = document.getElementById("reservasMesa");
+const $listaDirigentes = document.getElementById("listaDirigentes");
+const $listaIncorporacao = document.getElementById("listaIncorporacao");
+const $listaDesenvolvimento = document.getElementById("listaDesenvolvimento");
+const $listaCarencia = document.getElementById("listaCarencia");
 
-const nextMesaDirigenteName = document.getElementById("nextMesaDirigenteName");
-const nextPsicoDirigenteName = document.getElementById("nextPsicoDirigenteName");
-const nextMesaIncorpName = document.getElementById("nextMesaIncorpName");
-const nextMesaDesenvName = document.getElementById("nextMesaDesenvName");
+const $tabChamada = document.getElementById("tabChamada");
+const $tabParticipantes = document.getElementById("tabParticipantes");
+const $viewChamada = document.getElementById("viewChamada");
+const $viewParticipantes = document.getElementById("viewParticipantes");
 
-const listaDirigentes = document.getElementById("listaDirigentes");
-const listaIncorporacao = document.getElementById("listaIncorporacao");
-const listaDesenvolvimento = document.getElementById("listaDesenvolvimento");
-const listaCarencia = document.getElementById("listaCarencia");
+const $partFiltroGrupo = document.getElementById("partFiltroGrupo");
+const $partBusca = document.getElementById("partBusca");
+const $btnRecarregarParticipantes = document.getElementById("btnRecarregarParticipantes");
+const $partMsg = document.getElementById("partMsg");
+const $partErr = document.getElementById("partErr");
+const $listaParticipantes = document.getElementById("listaParticipantes");
 
-const partFiltroGrupo = document.getElementById("partFiltroGrupo");
-const partBusca = document.getElementById("partBusca");
-const btnRecarregarParticipantes = document.getElementById("btnRecarregarParticipantes");
-const partMsg = document.getElementById("partMsg");
-const partErr = document.getElementById("partErr");
-const listaParticipantes = document.getElementById("listaParticipantes");
-
-const novoNome = document.getElementById("novoNome");
-const novoGrupo = document.getElementById("novoGrupo");
-const novoAtivo = document.getElementById("novoAtivo");
-const novoMesa = document.getElementById("novoMesa");
-const novoPsico = document.getElementById("novoPsico");
-const btnAdicionarParticipante = document.getElementById("btnAdicionarParticipante");
+const $novoNome = document.getElementById("novoNome");
+const $novoGrupo = document.getElementById("novoGrupo");
+const $novoAtivo = document.getElementById("novoAtivo");
+const $novoMesa = document.getElementById("novoMesa");
+const $novoPsico = document.getElementById("novoPsico");
+const $btnAdicionarParticipante = document.getElementById("btnAdicionarParticipante");
 
 /* ===========================
    STATE
 =========================== */
 let mediumsAll = [];
+let chamadasDia = []; // rows da tabela chamadas do dia
+let currentISO = null;
+
+// Tabela rotacao (agora em MODO MANUAL):
+// rotacao.last_medium_id = PRÓXIMO (não "último")
 let rotacao = {
   mesa_desenvolvimento: null,
   mesa_dirigente: null,
   mesa_incorporacao: null,
-  psicografia: null,
+  psicografia: null
 };
 
-let chamadasMap = new Map(); // medium_id -> status (P/F/M/PS)
-let currentDateISO = null;
-
-let ORDERED_MEDIUMS = {
-  dirigente: [],
-  incorporacao: [],
-  desenvolvimento: [],
-  carencia: [],
+// alvo atual (mesma coisa, só pra UI)
+let nextTargets = {
+  mesa_dirigente: null,
+  psicografia: null,
+  mesa_incorporacao: null,
+  mesa_desenvolvimento: null
 };
 
 /* ===========================
    UI HELPERS
 =========================== */
-function setConn(text) {
-  statusPill.classList.remove("ok", "err");
-  statusPill.classList.add("ok");
-  statusText.textContent = text || "Conectando...";
+function setOk(msg) {
+  $msgErro.textContent = "";
+  $msgTopo.textContent = msg || "";
 }
-function setOk(text) {
-  statusPill.classList.remove("err");
-  statusPill.classList.add("ok");
-  statusText.textContent = text || "OK";
-  msgTopo.textContent = text || "";
-  msgErro.textContent = "";
+function setErr(msg) {
+  $msgTopo.textContent = "";
+  $msgErro.textContent = msg || "";
 }
-function setErr(text) {
-  statusPill.classList.remove("ok");
-  statusPill.classList.add("err");
-  statusText.textContent = "Erro na conexão";
-  msgErro.textContent = text || "Erro";
-  msgTopo.textContent = "";
-}
-function clearMsgs() {
-  msgTopo.textContent = "";
-  msgErro.textContent = "";
-  partMsg.textContent = "";
-  partErr.textContent = "";
+function setConn(ok, txt) {
+  $statusPill.classList.toggle("ok", !!ok);
+  $statusPill.classList.toggle("err", !ok);
+  $statusText.textContent = txt || (ok ? "Conectado" : "Erro na conexão");
 }
 
 function isoTodayLocal() {
@@ -181,416 +173,516 @@ function nextTuesdayISO(fromISO) {
   return local.toISOString().slice(0, 10);
 }
 
-/* ===========================
-   ORDER / QUEUE
-=========================== */
-function byGroup(list, group) {
-  return list.filter((m) => m.active === true && m.group_type === group);
+function nameById(id) {
+  return (mediumsAll.find((m) => m.id === id)?.name) || "—";
 }
 
-function sortQueue(list) {
-  return [...list].sort((a, b) => {
-    const as = a.sort_order ?? a.ordem_grupo ?? 999999;
-    const bs = b.sort_order ?? b.ordem_grupo ?? 999999;
-    if (as !== bs) return as - bs;
-    return (a.name || "").localeCompare(b.name || "");
-  });
+function isActive(m) {
+  return m && m.active === true;
 }
 
-function computeNext(queue, lastId) {
-  if (!queue.length) return null;
-  if (!lastId) return queue[0];
-  const idx = queue.findIndex((x) => x.id === lastId);
-  if (idx < 0) return queue[0];
-  return queue[(idx + 1) % queue.length];
+function groupLabel(gt) {
+  if (gt === "dirigente") return "Dirigente";
+  if (gt === "incorporacao") return "Incorporação";
+  if (gt === "desenvolvimento") return "Desenvolvimento";
+  if (gt === "carencia") return "Carência";
+  return gt || "—";
 }
 
 /* ===========================
-   LOAD
+   LOADERS
 =========================== */
 async function loadMediums() {
-  const data = await httpGet(
-    "mediums?select=id,name,group_type,active,can_mesa,can_psico,sort_order,ordem_grupo&order=group_type.asc,sort_order.asc,ordem_grupo.asc,name.asc"
-  );
+  // mantém o que já estava: pega campos que você já usa
+  const data = await httpGet("mediums?select=id,name,group_type,active,sort_order,ordem_grupo,pode_mesa,pode_psicografar&order=group_type.asc,sort_order.asc,ordem_grupo.asc,name.asc");
   mediumsAll = data || [];
-
-  ORDERED_MEDIUMS.dirigente = sortQueue(byGroup(mediumsAll, "dirigente"));
-  ORDERED_MEDIUMS.incorporacao = sortQueue(byGroup(mediumsAll, "incorporacao"));
-  ORDERED_MEDIUMS.desenvolvimento = sortQueue(byGroup(mediumsAll, "desenvolvimento"));
-  ORDERED_MEDIUMS.carencia = sortQueue(byGroup(mediumsAll, "carencia"));
 }
 
 async function loadRotacao() {
   const data = await httpGet("rotacao?select=group_type,last_medium_id");
-  const base = {
+  // reset
+  rotacao = {
     mesa_desenvolvimento: null,
     mesa_dirigente: null,
     mesa_incorporacao: null,
-    psicografia: null,
+    psicografia: null
   };
   for (const r of data || []) {
-    base[r.group_type] = r.last_medium_id || null;
+    rotacao[r.group_type] = r.last_medium_id || null;
   }
-  rotacao = base;
+  nextTargets = computeTargetsFromRotacao();
 }
 
 async function loadChamadasForDate(iso) {
-  chamadasMap = new Map();
-  const rows = await httpGet(`chamadas?select=medium_id,status&data=eq.${iso}`);
-  for (const r of rows || []) {
-    const st = (r.status || "").toUpperCase();
-    chamadasMap.set(r.medium_id, st);
-  }
+  const rows = await httpGet(`chamadas?select=medium_id,status,data&data=eq.${iso}`);
+  chamadasDia = rows || [];
 }
 
 /* ===========================
-   RENDER ROWS
+   MODO MANUAL: targets da próxima
 =========================== */
-function makeRow(m, status, isNextMesa, isNextPsico) {
-  const row = document.createElement("div");
-  row.className = "row";
-
-  if (isNextMesa) row.classList.add("nextMesa");
-  if (isNextPsico) row.classList.add("nextPsico");
-
-  const nameBox = document.createElement("div");
-  nameBox.className = "name";
-
-  const title = document.createElement("div");
-  title.className = "title";
-  title.textContent = m.name;
-
-  const sub = document.createElement("div");
-  sub.className = "sub";
-  sub.textContent = `Grupo: ${m.group_type} | Ativo: ${m.active ? "Sim" : "Não"} | Ordem: ${m.sort_order ?? "-"} / ${m.ordem_grupo ?? "-"}`;
-
-  nameBox.appendChild(title);
-  nameBox.appendChild(sub);
-
-  const radios = document.createElement("div");
-  radios.className = "radios";
-
-  function addRadio(label, value) {
-    const wrap = document.createElement("label");
-    wrap.className = "radioWrap";
-    const input = document.createElement("input");
-    input.type = "radio";
-    input.name = `st_${m.id}`;
-    input.value = value;
-    input.checked = status === value;
-    input.onchange = () => {
-      chamadasMap.set(m.id, value);
-      renderResumo();
-    };
-
-    const span = document.createElement("span");
-    span.className = `radioLbl ${value === "F" ? "danger" : value === "M" || value === "PS" ? "warn" : ""}`;
-    span.textContent = label;
-
-    wrap.appendChild(input);
-    wrap.appendChild(span);
-    radios.appendChild(wrap);
-  }
-
-  addRadio("P", "P");
-  addRadio("F", "F");
-  if (m.group_type === "dirigente") {
-    addRadio("M", "M");
-    addRadio("PS", "PS");
-  } else {
-    addRadio("M", "M");
-  }
-
-  row.appendChild(nameBox);
-  row.appendChild(radios);
-  return row;
-}
-
-function getStatus(mId) {
-  return (chamadasMap.get(mId) || "").toUpperCase();
-}
-
-/* ===========================
-   PRÓXIMOS (painel)
-=========================== */
-function nameOf(id) {
-  if (!id) return "—";
-  const m = mediumsAll.find((x) => x.id === id);
-  return m ? m.name : "—";
-}
-
 function computeTargetsFromRotacao() {
-  const dir = ORDERED_MEDIUMS.dirigente || [];
-  const inc = ORDERED_MEDIUMS.incorporacao || [];
-  const des = ORDERED_MEDIUMS.desenvolvimento || [];
-
-  const manual = (localStorage.getItem("manual_rotacao") === "1");
-
-  function pickExact(list, id) {
-    if (!id) return null;
-    return list.find((x) => x.id === id) || null;
-  }
-
-  // Se estiver em modo manual, 'rotacao.last_medium_id' passa a ser o PRÓXIMO escolhido.
-  // Se não, mantém o comportamento antigo (last -> next).
-  const mesaDir = manual ? pickExact(dir, rotacao?.mesa_dirigente) : computeNext(dir, rotacao?.mesa_dirigente);
-  let psico = manual ? pickExact(dir, rotacao?.psicografia) : computeNext(dir, rotacao?.psicografia);
-
-  // Evita repetir a mesma pessoa em Mesa e Psicografia
-  if (mesaDir && psico && mesaDir.id === psico.id) {
-    psico = null;
-  }
-
-  const mesaInc = manual ? pickExact(inc, rotacao?.mesa_incorporacao) : computeNext(inc, rotacao?.mesa_incorporacao);
-  const mesaDes = manual ? pickExact(des, rotacao?.mesa_desenvolvimento) : computeNext(des, rotacao?.mesa_desenvolvimento);
-
-  return { mesaDir, psico, mesaInc, mesaDes };
+  // MODO MANUAL:
+  // A tabela rotacao.last_medium_id passa a significar "PRÓXIMO" (e não "último").
+  // Assim, quem você marcar como próximo já aparece direto aqui e nas marcações amarelas/vermelhas.
+  return {
+    mesa_dirigente: rotacao?.mesa_dirigente || null,
+    psicografia: rotacao?.psicografia || null,
+    mesa_incorporacao: rotacao?.mesa_incorporacao || null,
+    mesa_desenvolvimento: rotacao?.mesa_desenvolvimento || null
+  };
 }
 
-function renderProximos() {
-  const { mesaDir, psico, mesaInc, mesaDes } = computeTargetsFromRotacao();
-
-  nextMesaDirigenteName.textContent = mesaDir ? mesaDir.name : "—";
-  nextPsicoDirigenteName.textContent = psico ? psico.name : "—";
-  nextMesaIncorpName.textContent = mesaInc ? mesaInc.name : "—";
-  nextMesaDesenvName.textContent = mesaDes ? mesaDes.name : "—";
-}
-
-/* ===========================
-   RESUMO
-=========================== */
-function renderResumo() {
-  let P = 0, F = 0, M = 0, PS = 0;
-
-  for (const st of chamadasMap.values()) {
-    if (st === "P") P++;
-    else if (st === "F") F++;
-    else if (st === "M") M++;
-    else if (st === "PS") PS++;
-  }
-
-  const total = P + F + M + PS;
-  const pres = total ? Math.round(((P + M + PS) / total) * 100) : 0;
-  const falt = total ? Math.round((F / total) * 100) : 0;
-
-  resumoGeral.textContent = `P:${P} M:${M} F:${F} PS:${PS} | Presença:${pres}% | Faltas:${falt}%`;
-}
-
-/* ===========================
-   RENDER LISTAS
-=========================== */
-function renderChamada() {
-  const { mesaDir, psico, mesaInc, mesaDes } = computeTargetsFromRotacao();
-
-  const dir = ORDERED_MEDIUMS.dirigente || [];
-  const inc = ORDERED_MEDIUMS.incorporacao || [];
-  const des = ORDERED_MEDIUMS.desenvolvimento || [];
-  const car = ORDERED_MEDIUMS.carencia || [];
-
-  // Dirigentes
-  listaDirigentes.innerHTML = "";
-  for (const m of dir) {
-    const st = getStatus(m.id);
-    const isNextMesa = mesaDir && mesaDir.id === m.id;
-    const isNextPsico = psico && psico.id === m.id;
-    const row = makeRow(m, st, isNextMesa, isNextPsico);
-
-    // Botões para definir PRÓXIMOS (rotação manual)
-    {
-      const radiosBox = row.querySelector('.radios');
-      if (radiosBox) {
-        const bNextM = document.createElement('button');
-        bNextM.type = 'button';
-        bNextM.className = 'radioLbl';
-        bNextM.textContent = '➜M';
-        bNextM.title = 'Definir como próximo Dirigente (Mesa)';
-        bNextM.onclick = () => setProximo('mesa_dirigente', m.id);
-
-        const bNextPS = document.createElement('button');
-        bNextPS.type = 'button';
-        bNextPS.className = 'radioLbl';
-        bNextPS.textContent = '➜PS';
-        bNextPS.title = 'Definir como próximo Dirigente (Psicografia)';
-        bNextPS.onclick = () => setProximo('psicografia', m.id);
-
-        radiosBox.appendChild(bNextM);
-        radiosBox.appendChild(bNextPS);
-      }
-    }
-
-    listaDirigentes.appendChild(row);
-  }
-
-  // Incorporação
-  listaIncorporacao.innerHTML = "";
-  for (const m of inc) {
-    const st = getStatus(m.id);
-    const isNext = mesaInc && mesaInc.id === m.id;
-    const row = makeRow(m, st, isNext, false);
-
-    // Definir o INÍCIO da próxima mesa (4 nomes saem a partir deste)
-    {
-      const radiosBox = row.querySelector('.radios');
-      if (radiosBox) {
-        const bNextM = document.createElement('button');
-        bNextM.type = 'button';
-        bNextM.className = 'radioLbl';
-        bNextM.textContent = '➜M';
-        bNextM.title = 'Definir como início da próxima mesa (Incorporação)';
-        bNextM.onclick = () => setProximo('mesa_incorporacao', m.id);
-        radiosBox.appendChild(bNextM);
-      }
-    }
-
-    listaIncorporacao.appendChild(row);
-  }
-
-  // Desenvolvimento
-  listaDesenvolvimento.innerHTML = "";
-  for (const m of des) {
-    const st = getStatus(m.id);
-    const isNext = mesaDes && mesaDes.id === m.id;
-    const row = makeRow(m, st, isNext, false);
-
-    // Definir o INÍCIO da próxima mesa (4 nomes saem a partir deste)
-    {
-      const radiosBox = row.querySelector('.radios');
-      if (radiosBox) {
-        const bNextM = document.createElement('button');
-        bNextM.type = 'button';
-        bNextM.className = 'radioLbl';
-        bNextM.textContent = '➜M';
-        bNextM.title = 'Definir como início da próxima mesa (Desenvolvimento)';
-        bNextM.onclick = () => setProximo('mesa_desenvolvimento', m.id);
-        radiosBox.appendChild(bNextM);
-      }
-    }
-
-    listaDesenvolvimento.appendChild(row);
-  }
-
-  // Carência
-  listaCarencia.innerHTML = "";
-  for (const m of car) {
-    const st = getStatus(m.id);
-    const row = makeRow(m, st, false, false);
-    listaCarencia.appendChild(row);
-  }
-
-  renderResumo();
-  renderProximos();
-}
-
-/* ===========================
-   PARTICIPANTES (ABA)
-=========================== */
-function matchesFilter(m) {
-  const g = (partFiltroGrupo.value || "").trim();
-  const q = (partBusca.value || "").trim().toLowerCase();
-
-  if (g && m.group_type !== g) return false;
-  if (q && !(m.name || "").toLowerCase().includes(q)) return false;
-  return true;
-}
-
-function renderParticipantes() {
-  listaParticipantes.innerHTML = "";
-  partMsg.textContent = "";
-  partErr.textContent = "";
-
-  const list = [...mediumsAll].filter(matchesFilter).sort((a, b) => (a.name || "").localeCompare(b.name || ""));
-
-  for (const m of list) {
-    const row = document.createElement("div");
-    row.className = "row";
-
-    const nameBox = document.createElement("div");
-    nameBox.className = "name";
-
-    const title = document.createElement("div");
-    title.className = "title";
-    title.textContent = m.name;
-
-    const sub = document.createElement("div");
-    sub.className = "sub";
-    sub.textContent = `Grupo: ${m.group_type} | Ativo: ${m.active ? "Sim" : "Não"} | Ordem: ${m.sort_order ?? "-"} / ${m.ordem_grupo ?? "-"}`;
-
-    nameBox.appendChild(title);
-    nameBox.appendChild(sub);
-
-    const actions = document.createElement("div");
-    actions.className = "participantsActions";
-
-    const x = document.createElement("button");
-    x.className = "xbtn";
-    x.textContent = "X";
-    x.title = "Desativar participante";
-    x.onclick = async () => {
-      try {
-        partMsg.textContent = `Desativando ${m.name}...`;
-        await httpPatch(`mediums?id=eq.${m.id}`, { active: false }, "return=minimal");
-        const idx = mediumsAll.findIndex((z) => z.id === m.id);
-        if (idx >= 0) mediumsAll[idx].active = false;
-        await loadMediums(); // reordena e recarrega caches
-        renderParticipantes();
-        renderChamada();
-        partMsg.textContent = `${m.name} desativado.`;
-      } catch (e) {
-        console.error(e);
-        partErr.textContent = `Erro ao desativar: ${e.message}`;
-      }
-    };
-
-    actions.appendChild(x);
-    row.appendChild(nameBox);
-    row.appendChild(actions);
-    listaParticipantes.appendChild(row);
-  }
-}
-
-/* ===========================
-   ROTACAO (AUTOMAÇÃO ANTIGA)
-   Mantida aqui só para referência, mas NÃO é chamada no SAVE.
-=========================== */
-async function persistRotacaoFromClicks() {
-  // (mantido, mas não usado)
-}
-
-/* ===========================
-   ROTACAO MANUAL (NOVO)
-   - Ao invés de "automação", você define manualmente quem será o PRÓXIMO.
-   - Quando você clicar em ➜M / ➜PS, isso grava direto na tabela rotacao.
-=========================== */
-async function setProximo(groupType, mediumId) {
-  if (!groupType || !mediumId) return;
+async function setNextManual(roleKey, mediumId) {
   try {
-    setConn("Salvando próximo...");
-    await httpPatch(`rotacao?group_type=eq.${groupType}`, { last_medium_id: mediumId }, "return=minimal");
-    if (!rotacao) rotacao = {};
-    rotacao[groupType] = mediumId;
+    if (!roleKey || !mediumId) return;
 
-    // liga o modo manual a partir do primeiro uso
-    localStorage.setItem("manual_rotacao", "1");
+    // grava direto em rotacao (sem automação)
+    await httpPatch(`rotacao?group_type=eq.${roleKey}`, { last_medium_id: mediumId });
 
-    setOk("Próximo definido com sucesso.");
+    // atualiza estado local
+    rotacao[roleKey] = mediumId;
+
+    nextTargets = computeTargetsFromRotacao();
     renderProximos();
     renderChamada();
+
+    const nome = nameById(mediumId);
+    setOk(`Próximo definido: ${roleKey} → ${nome}`);
   } catch (e) {
     console.error(e);
     setErr(`Erro ao definir próximo: ${e.message}`);
   }
 }
 
-/* ====== VERIFICAR DATA (carrega e renderiza) ====== */
-async function onVerificarData() {
-  clearMsgs();
-  try {
-    const iso = dataChamada.value;
-    if (!iso) return;
-    currentDateISO = iso;
+/* ===========================
+   CHAMADA HELPERS
+=========================== */
+function getStatusFor(mediumId) {
+  const r = chamadasDia.find((x) => x.medium_id === mediumId);
+  return (r?.status || "").toUpperCase();
+}
 
-    setConn("Carregando chamada...");
-    await loadChamadasForDate(iso);
+function setStatusFor(mediumId, status) {
+  status = (status || "").toUpperCase();
+  const idx = chamadasDia.findIndex((x) => x.medium_id === mediumId);
+  if (idx >= 0) {
+    chamadasDia[idx].status = status;
+  } else {
+    chamadasDia.push({ data: currentISO, medium_id: mediumId, status });
+  }
+}
+
+function canMesa(m) {
+  // se seu banco usa "pode_mesa" / "pode_psicografar"
+  if (m.group_type === "dirigente") return true; // dirigente pode ter M e PS, a UI já controla
+  return m.pode_mesa === true || m.pode_mesa === 1 || m.pode_mesa === "true";
+}
+
+function canPsico(m) {
+  return m.pode_psicografar === true || m.pode_psicografar === 1 || m.pode_psicografar === "true";
+}
+
+function makeRow(m) {
+  const row = document.createElement("div");
+  row.className = "row";
+
+  // left
+  const left = document.createElement("div");
+  left.className = "name";
+
+  const t = document.createElement("div");
+  t.className = "title";
+  t.textContent = m.name || "—";
+
+  const sub = document.createElement("div");
+  sub.className = "sub";
+  sub.textContent = groupLabel(m.group_type);
+
+  left.appendChild(t);
+  left.appendChild(sub);
+
+  // right
+  const right = document.createElement("div");
+  right.className = "badges";
+
+  const st = getStatusFor(m.id);
+
+  // destaque manual do "próximo"
+  const isNextMesa =
+    (m.id === nextTargets.mesa_dirigente && m.group_type === "dirigente") ||
+    (m.id === nextTargets.mesa_incorporacao && m.group_type === "incorporacao") ||
+    (m.id === nextTargets.mesa_desenvolvimento && m.group_type === "desenvolvimento");
+
+  const isNextPsico = (m.id === nextTargets.psicografia && m.group_type === "dirigente");
+
+  if (isNextMesa) row.classList.add("nextMesa");
+  if (isNextPsico) row.classList.add("nextPsico");
+
+  // radios
+  const radios = document.createElement("div");
+  radios.className = "radioGroup";
+
+  // ====== MODO MANUAL: definir PRÓXIMOS (grava na tabela rotacao) ======
+  const nextBtns = document.createElement("div");
+  nextBtns.className = "nextBtns";
+
+  function mkNextBtn(label, roleKey) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "btnNext";
+    b.textContent = label;
+    b.onclick = (ev) => {
+      ev.stopPropagation();
+      setNextManual(roleKey, m.id);
+    };
+    return b;
+  }
+
+  if (m.group_type === "dirigente") {
+    nextBtns.appendChild(mkNextBtn("Próx Mesa", "mesa_dirigente"));
+    nextBtns.appendChild(mkNextBtn("Próx PS", "psicografia"));
+  } else if (m.group_type === "incorporacao") {
+    nextBtns.appendChild(mkNextBtn("Próx Mesa", "mesa_incorporacao"));
+  } else if (m.group_type === "desenvolvimento") {
+    nextBtns.appendChild(mkNextBtn("Próx Mesa", "mesa_desenvolvimento"));
+  }
+
+  if (nextBtns.childNodes.length) right.appendChild(nextBtns);
+
+  function mkRadio(label, val, enabled = true) {
+    const w = document.createElement("label");
+    w.className = "radioPill";
+    const inp = document.createElement("input");
+    inp.type = "radio";
+    inp.name = `st-${m.id}`;
+    inp.value = val;
+    inp.checked = st === val;
+    inp.disabled = !enabled;
+    inp.onchange = () => {
+      setStatusFor(m.id, val);
+      renderResumo();
+    };
+    const span = document.createElement("span");
+    span.textContent = label;
+    w.appendChild(inp);
+    w.appendChild(span);
+    return w;
+  }
+
+  const canM = m.group_type === "dirigente" ? true : canMesa(m);
+  const canPS = m.group_type === "dirigente" ? canPsico(m) : false;
+
+  radios.appendChild(mkRadio("P", "P", true));
+  radios.appendChild(mkRadio("F", "F", true));
+
+  if (m.group_type === "dirigente") {
+    radios.appendChild(mkRadio("M", "M", true));
+    radios.appendChild(mkRadio("PS", "PS", canPS));
+  } else {
+    radios.appendChild(mkRadio("M", "M", canM));
+  }
+
+  right.appendChild(radios);
+
+  row.appendChild(left);
+  row.appendChild(right);
+
+  return row;
+}
+
+/* ===========================
+   RENDER CHAMADA
+=========================== */
+function renderProximos() {
+  $nextMesaDirigenteName.textContent = nameById(nextTargets.mesa_dirigente);
+  $nextPsicoDirigenteName.textContent = nameById(nextTargets.psicografia);
+  $nextMesaIncorpName.textContent = nameById(nextTargets.mesa_incorporacao);
+  $nextMesaDesenvName.textContent = nameById(nextTargets.mesa_desenvolvimento);
+}
+
+function renderResumo() {
+  // mantém resumo simples (sem mexer no layout)
+  const counts = { P: 0, F: 0, M: 0, PS: 0 };
+  for (const r of chamadasDia) {
+    const s = (r.status || "").toUpperCase();
+    if (counts[s] != null) counts[s]++;
+  }
+  const total = counts.P + counts.F + counts.M + counts.PS;
+  const pres = total ? Math.round(((counts.P + counts.M) / total) * 100) : 0;
+  const falt = total ? Math.round((counts.F / total) * 100) : 0;
+
+  const $resumoGeral = document.getElementById("resumoGeral");
+  $resumoGeral.textContent = `P:${counts.P} M:${counts.M} F:${counts.F} PS:${counts.PS} | Presença:${pres}% | Faltas:${falt}%`;
+}
+
+function renderChamada() {
+  renderProximos();
+  renderResumo();
+
+  const active = mediumsAll.filter(isActive);
+
+  const dirigentes = active.filter((m) => m.group_type === "dirigente");
+  const incorp = active.filter((m) => m.group_type === "incorporacao");
+  const desenv = active.filter((m) => m.group_type === "desenvolvimento");
+  const carencia = active.filter((m) => m.group_type === "carencia");
+
+  // (ordem já vem do banco; se tiver sort_order/ordem_grupo)
+  const sortFn = (a, b) => {
+    const as = (a.sort_order ?? a.ordem_grupo ?? 999999);
+    const bs = (b.sort_order ?? b.ordem_grupo ?? 999999);
+    if (as !== bs) return as - bs;
+    return (a.name || "").localeCompare(b.name || "");
+  };
+
+  dirigentes.sort(sortFn);
+  incorp.sort(sortFn);
+  desenv.sort(sortFn);
+  carencia.sort(sortFn);
+
+  $listaDirigentes.innerHTML = "";
+  $listaIncorporacao.innerHTML = "";
+  $listaDesenvolvimento.innerHTML = "";
+  $listaCarencia.innerHTML = "";
+
+  dirigentes.forEach((m) => $listaDirigentes.appendChild(makeRow(m)));
+  incorp.forEach((m) => $listaIncorporacao.appendChild(makeRow(m)));
+  desenv.forEach((m) => $listaDesenvolvimento.appendChild(makeRow(m)));
+  carencia.forEach((m) => $listaCarencia.appendChild(makeRow(m)));
+}
+
+/* ===========================
+   SAVE CHAMADA (SEM ROTACAO)
+=========================== */
+async function onSalvarTudo() {
+  if (!currentISO) {
+    setErr("Defina a data antes de salvar.");
+    return;
+  }
+  try {
+    setOk("Salvando...");
+
+    // monta rows para upsert
+    const rows = chamadasDia
+      .filter((r) => r.medium_id && r.status)
+      .map((r) => ({
+        medium_id: r.medium_id,
+        data: currentISO,
+        status: (r.status || "").toUpperCase()
+      }));
+
+    if (rows.length) {
+      await httpPost("chamadas", rows, "resolution=merge-duplicates,return=minimal");
+    }
+
+    // Modo manual: rotação NÃO é atualizada aqui.
+    setOk("Chamada salva.");
+  } catch (e) {
+    console.error(e);
+    setErr(`Erro ao salvar: ${e.message}`);
+  }
+}
+
+/* ===========================
+   PRINT NEXT (usa rotacao manual)
+=========================== */
+function buildPrintHTML(nextISO) {
+  const style = `
+    <style>
+      body{font-family:Arial, sans-serif; padding:24px}
+      h1{margin:0 0 4px 0}
+      .sub{color:#444; margin-bottom:16px}
+      table{border-collapse:collapse; width:100%}
+      td,th{border:1px solid #ddd; padding:8px}
+      th{text-align:left; background:#f5f5f5}
+      .k{width:240px}
+    </style>
+  `;
+  return `
+    <html><head><meta charset="utf-8" />${style}</head>
+    <body>
+      <h1>Próxima Chamada</h1>
+      <div class="sub">Data: <b>${nextISO}</b></div>
+
+      <table>
+        <thead><tr><th class="k">Função</th><th>Nome</th></tr></thead>
+        <tbody>
+          <tr><td>Dirigente (Mesa)</td><td>${nameById(nextTargets.mesa_dirigente)}</td></tr>
+          <tr><td>Dirigente (Psicografia)</td><td>${nameById(nextTargets.psicografia)}</td></tr>
+          <tr><td>Incorporação (Mesa)</td><td>${nameById(nextTargets.mesa_incorporacao)}</td></tr>
+          <tr><td>Desenvolvimento (Mesa)</td><td>${nameById(nextTargets.mesa_desenvolvimento)}</td></tr>
+        </tbody>
+      </table>
+
+      <script>window.onload=()=>window.print()</script>
+    </body></html>
+  `;
+}
+
+function onPrintNext() {
+  const base = currentISO || isoTodayLocal();
+  const nextISO = nextTuesdayISO(base);
+
+  const w = window.open("", "_blank");
+  w.document.open();
+  w.document.write(buildPrintHTML(nextISO));
+  w.document.close();
+}
+
+/* ===========================
+   TABS
+=========================== */
+function showTab(which) {
+  const isChamada = which === "chamada";
+  $tabChamada.classList.toggle("active", isChamada);
+  $tabParticipantes.classList.toggle("active", !isChamada);
+  $viewChamada.style.display = isChamada ? "" : "none";
+  $viewParticipantes.style.display = isChamada ? "none" : "";
+}
+
+/* ===========================
+   PARTICIPANTES (mínimo)
+=========================== */
+function partSetOk(msg) {
+  $partErr.textContent = "";
+  $partMsg.textContent = msg || "";
+}
+function partSetErr(msg) {
+  $partMsg.textContent = "";
+  $partErr.textContent = msg || "";
+}
+
+function renderParticipantes() {
+  const filtro = ($partFiltroGrupo.value || "").trim();
+  const busca = ($partBusca.value || "").trim().toLowerCase();
+
+  let list = [...mediumsAll];
+
+  if (filtro) list = list.filter((m) => m.group_type === filtro);
+  if (busca) list = list.filter((m) => (m.name || "").toLowerCase().includes(busca));
+
+  list.sort((a, b) => (a.group_type || "").localeCompare(b.group_type || "") || (a.name || "").localeCompare(b.name || ""));
+
+  $listaParticipantes.innerHTML = "";
+  for (const m of list) {
+    const row = document.createElement("div");
+    row.className = "row";
+
+    const left = document.createElement("div");
+    left.className = "name";
+
+    const t = document.createElement("div");
+    t.className = "title";
+    t.textContent = m.name || "—";
+
+    const s = document.createElement("div");
+    s.className = "sub";
+    s.textContent = `${groupLabel(m.group_type)} • ${m.active ? "ativo" : "inativo"}`;
+
+    left.appendChild(t);
+    left.appendChild(s);
+
+    const right = document.createElement("div");
+    right.className = "badges";
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "btnNext";
+    btn.textContent = m.active ? "Desativar" : "Ativar";
+    btn.onclick = async () => {
+      try {
+        await httpPatch(`mediums?id=eq.${m.id}`, { active: !m.active });
+        m.active = !m.active;
+        partSetOk("Atualizado.");
+        renderParticipantes();
+        renderChamada();
+      } catch (e) {
+        partSetErr(e.message);
+      }
+    };
+
+    right.appendChild(btn);
+
+    row.appendChild(left);
+    row.appendChild(right);
+    $listaParticipantes.appendChild(row);
+  }
+}
+
+async function onAdicionarParticipante() {
+  try {
+    const name = ($novoNome.value || "").trim();
+    const group_type = ($novoGrupo.value || "").trim();
+    if (!name) {
+      partSetErr("Informe um nome.");
+      return;
+    }
+
+    const body = [{
+      name,
+      group_type,
+      active: $novoAtivo.checked,
+      pode_mesa: $novoMesa.checked,
+      pode_psicografar: $novoPsico.checked
+    }];
+
+    await httpPost("mediums", body, "return=minimal");
+    partSetOk("Participante adicionado.");
+
+    await loadMediums();
+    renderParticipantes();
+    renderChamada();
+
+    $novoNome.value = "";
+    $novoMesa.checked = false;
+    $novoPsico.checked = false;
+    $novoAtivo.checked = true;
+  } catch (e) {
+    console.error(e);
+    partSetErr(e.message);
+  }
+}
+
+/* ===========================
+   INIT
+=========================== */
+async function init() {
+  try {
+    setConn(false, "Conectando...");
+    setOk("");
+    setErr("");
+
+    const today = isoTodayLocal();
+    $dataChamada.value = today;
+    currentISO = today;
+
+    await loadMediums();
+    await loadRotacao();
+    await loadChamadasForDate(currentISO);
+
+    setConn(true, "Conectado");
+    renderChamada();
+
+    // participants tab
+    renderParticipantes();
+  } catch (e) {
+    console.error(e);
+    setConn(false, "Erro na conexão");
+    setErr(`Erro ao conectar no Supabase REST: ${e.message}`);
+  }
+}
+
+/* ===========================
+   EVENTS
+=========================== */
+$btnVerificar.addEventListener("click", async () => {
+  try {
+    const iso = $dataChamada.value;
+    if (!iso) return;
+    currentISO = iso;
+
+    setOk("Carregando data...");
+    await loadChamadasForDate(currentISO);
     await loadRotacao();
 
     setOk("Data carregada.");
@@ -599,208 +691,37 @@ async function onVerificarData() {
     console.error(e);
     setErr(`Erro ao verificar data: ${e.message}`);
   }
-}
-
-/* ====== SAVE ====== */
-async function onSalvarTudo() {
-  clearMsgs();
-  if (!currentDateISO) {
-    setErr("Selecione uma data antes de salvar.");
-    return;
-  }
-
-  try {
-    setConn("Salvando...");
-
-    const rows = [];
-    for (const [medium_id, status] of chamadasMap.entries()) {
-      if (!status) continue;
-      rows.push({
-        medium_id,
-        data: currentDateISO,
-        status: status.toUpperCase(),
-      });
-    }
-
-    if (rows.length) {
-      await httpPost("chamadas", rows, "resolution=merge-duplicates,return=minimal");
-    }
-
-    // Rotação agora é MANUAL: não atualizamos 'rotacao' automaticamente ao salvar.
-
-    await loadRotacao();
-    setOk("Chamada salva com sucesso.");
-    renderChamada();
-  } catch (e) {
-    console.error(e);
-    setErr(`Erro ao salvar: ${e.message}`);
-  }
-}
-
-/* ====== PRINT ====== */
-function buildPrintDoc(nextISO, targets) {
-  const style = `
-    <style>
-      body{font-family:Arial, sans-serif; padding:20px}
-      h1{margin:0}
-      .sub{margin:6px 0 18px 0; color:#444}
-      .grid{display:grid; grid-template-columns:1fr 1fr; gap:12px}
-      .card{border:1px solid #ddd; border-radius:10px; padding:14px}
-      .t{font-weight:bold; margin-bottom:6px}
-      .v{font-size:18px}
-    </style>
-  `;
-
-  return `
-    <html><head><meta charset="utf-8" />${style}</head>
-    <body>
-      <h1>Próxima Chamada</h1>
-      <div class="sub">Data: <b>${nextISO}</b></div>
-
-      <div class="grid">
-        <div class="card"><div class="t">Dirigente (Mesa)</div><div class="v">${targets.mesaDir || "—"}</div></div>
-        <div class="card"><div class="t">Dirigente (Psicografia)</div><div class="v">${targets.psico || "—"}</div></div>
-        <div class="card"><div class="t">Incorporação (Mesa)</div><div class="v">${targets.mesaInc || "—"}</div></div>
-        <div class="card"><div class="t">Desenvolvimento (Mesa)</div><div class="v">${targets.mesaDes || "—"}</div></div>
-      </div>
-
-      <script>window.onload=()=>window.print()</script>
-    </body></html>
-  `;
-}
-
-async function onImprimirProxima() {
-  try {
-    await loadRotacao();
-    const base = currentDateISO || isoTodayLocal();
-    const nextISO = nextTuesdayISO(base);
-
-    const { mesaDir, psico, mesaInc, mesaDes } = computeTargetsFromRotacao();
-    const targets = {
-      mesaDir: mesaDir ? mesaDir.name : "—",
-      psico: psico ? psico.name : "—",
-      mesaInc: mesaInc ? mesaInc.name : "—",
-      mesaDes: mesaDes ? mesaDes.name : "—",
-    };
-
-    const w = window.open("", "_blank");
-    w.document.open();
-    w.document.write(buildPrintDoc(nextISO, targets));
-    w.document.close();
-  } catch (e) {
-    console.error(e);
-    setErr(`Erro ao imprimir: ${e.message}`);
-  }
-}
-
-/* ===========================
-   TABS
-=========================== */
-function setTab(which) {
-  if (which === "chamada") {
-    tabChamada.classList.add("active");
-    tabParticipantes.classList.remove("active");
-    viewChamada.style.display = "";
-    viewParticipantes.style.display = "none";
-  } else {
-    tabParticipantes.classList.add("active");
-    tabChamada.classList.remove("active");
-    viewParticipantes.style.display = "";
-    viewChamada.style.display = "none";
-  }
-}
-
-tabChamada.addEventListener("click", () => setTab("chamada"));
-tabParticipantes.addEventListener("click", () => {
-  setTab("participantes");
-  renderParticipantes();
 });
 
-/* ===========================
-   PARTICIPANTS ACTIONS
-=========================== */
-btnRecarregarParticipantes.addEventListener("click", async () => {
+$btnSalvar.addEventListener("click", onSalvarTudo);
+$btnImprimirProxima.addEventListener("click", onPrintNext);
+
+$tabChamada.addEventListener("click", () => showTab("chamada"));
+$tabParticipantes.addEventListener("click", () => showTab("participantes"));
+
+$btnRecarregarParticipantes.addEventListener("click", async () => {
   try {
-    partMsg.textContent = "Recarregando...";
+    partSetOk("Recarregando...");
     await loadMediums();
-    renderParticipantes();
-    partMsg.textContent = "OK.";
-  } catch (e) {
-    console.error(e);
-    partErr.textContent = `Erro: ${e.message}`;
-  }
-});
-
-partFiltroGrupo.addEventListener("change", renderParticipantes);
-partBusca.addEventListener("input", renderParticipantes);
-
-btnAdicionarParticipante.addEventListener("click", async () => {
-  partMsg.textContent = "";
-  partErr.textContent = "";
-  try {
-    const name = (novoNome.value || "").trim();
-    const group_type = (novoGrupo.value || "").trim();
-    if (!name || !group_type) {
-      partErr.textContent = "Nome e grupo são obrigatórios.";
-      return;
-    }
-
-    const payload = {
-      name,
-      group_type,
-      active: !!novoAtivo.checked,
-      can_mesa: !!novoMesa.checked,
-      can_psico: !!novoPsico.checked,
-    };
-
-    await httpPost("mediums", payload, "return=minimal");
-    novoNome.value = "";
-    novoMesa.checked = false;
-    novoPsico.checked = false;
-
-    await loadMediums();
+    partSetOk("Ok.");
     renderParticipantes();
     renderChamada();
-
-    partMsg.textContent = "Participante adicionado.";
   } catch (e) {
-    console.error(e);
-    partErr.textContent = `Erro ao adicionar: ${e.message}`;
+    partSetErr(e.message);
   }
 });
 
-/* ===========================
-   EVENTS
-=========================== */
-btnVerificar.addEventListener("click", onVerificarData);
-btnSalvar.addEventListener("click", onSalvarTudo);
-btnImprimirProxima.addEventListener("click", onImprimirProxima);
+$partFiltroGrupo.addEventListener("change", renderParticipantes);
+$partBusca.addEventListener("input", renderParticipantes);
 
-/* ===========================
-   BOOT
-=========================== */
-async function boot() {
-  clearMsgs();
-  try {
-    if (!SUPABASE_URL.includes("supabase.co") || SUPABASE_ANON === "YOUR_ANON_KEY") {
-      setErr("Config ausente: confira SUPABASE_URL e SUPABASE_ANON no config.js.");
-      return;
-    }
+$btnAdicionarParticipante.addEventListener("click", onAdicionarParticipante);
 
-    setConn("Conectando...");
-    dataChamada.value = isoTodayLocal();
-    currentDateISO = dataChamada.value;
-
-    await loadMediums();
-    await loadRotacao();
-    await loadChamadasForDate(currentDateISO);
-
-    setOk("Supabase OK");
-    renderChamada();
-  } catch (e) {
-    console.error(e);
-    setErr(`Erro ao conectar no Supabase REST: ${e.message}`);
-  }
+// compatibilidade (mantém assinatura, mas sem uso)
+async function persistRotacaoFromClicks() {
+  // DESATIVADO (modo manual):
+  // A rotação automática foi abandonada. Agora você define manualmente os "próximos"
+  // clicando nos botões "Próx Mesa / Próx PS" e isso é gravado direto na tabela rotacao.
+  return;
 }
 
-boot();
+init();
