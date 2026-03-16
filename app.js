@@ -547,6 +547,7 @@ async function onVerificar() {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return setErro("Data inválida.");
   currentDateISO = iso;
   await loadChamadasForDate(iso);
+  await loadRotacao(); // Sempre recarrega rotação para mostrar os PRÓXIMOS corretos
   setOk(`Data carregada: ${iso}`);
   renderChamada();
 }
