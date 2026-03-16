@@ -68,6 +68,20 @@ async function sbUpsertChamadas(rows) {
   return true;
 }
 
+/* Upsert de rotação: insere se não existir, atualiza se existir (group_type = PK) */
+async function sbUpsertRotacao(groupType, lastMediumId) {
+  const r = await fetch(`${SUPABASE_URL}/rest/v1/rotacao?on_conflict=group_type`, {
+    method: "POST",
+    headers: {
+      ...headersJson("resolution=merge-duplicates,return=minimal"),
+    },
+    body: JSON.stringify([{ group_type: groupType, last_medium_id: lastMediumId }]),
+  });
+  const t = await r.text();
+  if (!r.ok) throw new Error(`${r.status} ${r.statusText}: ${t}`);
+  return true;
+}
+
 /* ====== DOM ====== */
 const $ = (id) => document.getElementById(id);
 function must(id) {
@@ -216,7 +230,7 @@ function computeNextSkip(list, lastId, skipId) {
   return n;
 }
 
-function pickLastClicked(ids, tsMap) {
+function pickLastClicked(ids, tsMap, orderedList = null) {
   let bestId = null;
   let bestTs = -1;
   for (const id of ids) {
@@ -226,7 +240,14 @@ function pickLastClicked(ids, tsMap) {
       bestId = id;
     }
   }
-  if (!bestId && ids.length) bestId = ids[ids.length - 1];
+  if (!bestId && ids.length) {
+    if (orderedList && orderedList.length) {
+      for (const m of orderedList) {
+        if (ids.includes(m.id)) bestId = m.id;
+      }
+    }
+    if (!bestId) bestId = ids[ids.length - 1];
+  }
   return bestId;
 }
 
@@ -475,10 +496,12 @@ async function persistRotacaoFromClicks() {
     .filter((m) => m.group_type === "dirigente" && (chamadasMap.get(m.id) || "") === "PS")
     .map((m) => m.id);
 
-  const lastMesaDir = pickLastClicked(dirMesaIds, tsMesa);
+  const dir = eligible("dirigente");
+  const ps = eligiblePsicoDirigentes();
+  const lastMesaDir = pickLastClicked(dirMesaIds, tsMesa, dir);
   const lastMesaInc = pickLastForMesa4(incMesaIds, inc, rotacao.mesa_incorporacao);
   const lastMesaDes = pickLastForMesa4(desMesaIds, des, rotacao.mesa_desenvolvimento);
-  let lastPsico = pickLastClicked(psicoIds, tsPsico);
+  let lastPsico = pickLastClicked(psicoIds, tsPsico, ps);
 
   // Garante que não seja a mesma pessoa em Mesa e Psicografia
   if (lastMesaDir && lastPsico && lastMesaDir === lastPsico) {
@@ -486,10 +509,10 @@ async function persistRotacaoFromClicks() {
     lastPsico = computeNextSkip(psList, lastPsico, lastMesaDir)?.id || lastPsico;
   }
 
-  if (lastMesaDir) await sbPatch(`rotacao?group_type=eq.mesa_dirigente`, { last_medium_id: lastMesaDir });
-  if (lastMesaInc) await sbPatch(`rotacao?group_type=eq.mesa_incorporacao`, { last_medium_id: lastMesaInc });
-  if (lastMesaDes) await sbPatch(`rotacao?group_type=eq.mesa_desenvolvimento`, { last_medium_id: lastMesaDes });
-  if (lastPsico)   await sbPatch(`rotacao?group_type=eq.psicografia`, { last_medium_id: lastPsico });
+  if (lastMesaDir) await sbUpsertRotacao("mesa_dirigente", lastMesaDir);
+  if (lastMesaInc) await sbUpsertRotacao("mesa_incorporacao", lastMesaInc);
+  if (lastMesaDes) await sbUpsertRotacao("mesa_desenvolvimento", lastMesaDes);
+  if (lastPsico)   await sbUpsertRotacao("psicografia", lastPsico);
 }
 
 async function onSalvarTudo() {
