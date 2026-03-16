@@ -222,18 +222,21 @@ function computeNext4(list, lastId) {
   return result;
 }
 
-/* Retorna os 4 próximos EXCLUINDO os 4 que sentaram (evita repetir na volta da fila circular) */
-function computeNext4ExcludingLast4(list, lastId) {
+/* Retorna os 4 próximos EXCLUINDO quem sentou (idsToExclude ou os 4 consecutivos antes de lastId) */
+function computeNext4Excluding(list, lastId, idsToExclude = []) {
   if (!list.length) return [];
   const len = list.length;
   const idx = !lastId ? -1 : list.findIndex((x) => x.id === lastId);
   const startIdx = (idx + 1) % len;
-  const whoSat = idx >= 0 ? new Set([
-    list[(idx - 3 + len) % len]?.id,
-    list[(idx - 2 + len) % len]?.id,
-    list[(idx - 1 + len) % len]?.id,
-    list[idx]?.id
-  ].filter(Boolean)) : new Set();
+  let whoSat = new Set(idsToExclude);
+  if (whoSat.size === 0 && idx >= 0) {
+    whoSat = new Set([
+      list[(idx - 3 + len) % len]?.id,
+      list[(idx - 2 + len) % len]?.id,
+      list[(idx - 1 + len) % len]?.id,
+      list[idx]?.id
+    ].filter(Boolean));
+  }
   const result = [];
   let i = 0;
   while (result.length < 4 && i < len) {
@@ -326,8 +329,10 @@ function computeTargetsFromRotacao() {
   const ps  = eligiblePsicoDirigentes();
 
   const nextMesaDir = computeNext(dir, rotacao.mesa_dirigente);
-  const nextMesaInc4 = computeNext4ExcludingLast4(inc, rotacao.mesa_incorporacao);
-  const nextMesaDes4 = computeNext4ExcludingLast4(des, rotacao.mesa_desenvolvimento);
+  const incWhoSat = currentDateISO ? inc.filter((m) => (chamadasMap.get(m.id) || "").toUpperCase() === "M").map((m) => m.id) : [];
+  const desWhoSat = currentDateISO ? des.filter((m) => (chamadasMap.get(m.id) || "").toUpperCase() === "M").map((m) => m.id) : [];
+  const nextMesaInc4 = computeNext4Excluding(inc, rotacao.mesa_incorporacao, incWhoSat);
+  const nextMesaDes4 = computeNext4Excluding(des, rotacao.mesa_desenvolvimento, desWhoSat);
 
   const nextPsico = computeNextSkip(ps, rotacao.psicografia, nextMesaDir ? nextMesaDir.id : null);
 
@@ -843,6 +848,18 @@ function showTab(which) {
   if (!isChamada) renderParticipants();
 }
 
+/* Carrega a última chamada para que "Próximos" exclua quem já sentou */
+async function loadUltimaChamada() {
+  try {
+    const rows = await sbGet("chamadas?select=data&order=data.desc&limit=1");
+    if (rows.length && rows[0].data) {
+      currentDateISO = rows[0].data;
+      dataChamada.value = currentDateISO;
+      await loadChamadasForDate(currentDateISO);
+    }
+  } catch (_) { /* ignora */ }
+}
+
 /* ====== INIT ====== */
 (async function init() {
   try {
@@ -852,8 +869,9 @@ function showTab(which) {
 
     await loadMediums();
     await loadRotacao();
+    await loadUltimaChamada();
 
-    setOk("Selecione a data e clique em Verificar data.");
+    setOk(currentDateISO ? `Última chamada: ${currentDateISO}. Próximos já excluem quem sentou.` : "Selecione a data e clique em Verificar data.");
     renderChamada();
     renderParticipants();
   } catch (e) {
