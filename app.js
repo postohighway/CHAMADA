@@ -150,9 +150,13 @@ let currentDateISO = null;
 
 let chamadasMap = new Map();
 
-/* timestamps de clique: last-click wins (dirigente mesa e psicografia) */
-const tsMesa = new Map();
-const tsPsico = new Map();
+/* Estrela: quem foi o último a sentar (definido pelo clique do usuário) */
+let starLast = {
+  mesa_dirigente: null,
+  psicografia: null,
+  mesa_incorporacao: null,
+  mesa_desenvolvimento: null,
+};
 
 /* Targets atuais (para destaque e impressão) */
 /* mesa_dirigente e psicografia: 1 id; mesa_incorporacao e mesa_desenvolvimento: array de 4 ids */
@@ -222,30 +226,6 @@ function computeNext4(list, lastId) {
   return result;
 }
 
-/* Retorna os 4 próximos EXCLUINDO quem sentou (idsToExclude ou os 4 consecutivos antes de lastId) */
-function computeNext4Excluding(list, lastId, idsToExclude = []) {
-  if (!list.length) return [];
-  const len = list.length;
-  const idx = !lastId ? -1 : list.findIndex((x) => x.id === lastId);
-  const startIdx = (idx + 1) % len;
-  let whoSat = new Set(idsToExclude);
-  if (whoSat.size === 0 && idx >= 0) {
-    whoSat = new Set([
-      list[(idx - 3 + len) % len]?.id,
-      list[(idx - 2 + len) % len]?.id,
-      list[(idx - 1 + len) % len]?.id,
-      list[idx]?.id
-    ].filter(Boolean));
-  }
-  const result = [];
-  let i = 0;
-  while (result.length < 4 && i < len) {
-    const m = list[(startIdx + i) % len];
-    if (m && !whoSat.has(m.id)) result.push(m);
-    i++;
-  }
-  return result;
-}
 
 function computeNextSkip(list, lastId, skipId) {
   if (!list.length) return null;
@@ -255,36 +235,9 @@ function computeNextSkip(list, lastId, skipId) {
   return n;
 }
 
-function pickLastClicked(ids, tsMap, orderedList = null) {
-  let bestId = null;
-  let bestTs = -1;
-  for (const id of ids) {
-    const ts = tsMap.get(id);
-    if (typeof ts === "number" && ts > bestTs) {
-      bestTs = ts;
-      bestId = id;
-    }
-  }
-  if (!bestId && ids.length) {
-    if (orderedList && orderedList.length) {
-      for (const m of orderedList) {
-        if (ids.includes(m.id)) bestId = m.id;
-      }
-    }
-    if (!bestId) bestId = ids[ids.length - 1];
-  }
-  return bestId;
-}
-
-/* Para mesa de 4: last = o último (4º) na ordem da fila entre os que marcaram M */
-function pickLastForMesa4(idsWithM, list, lastId) {
-  if (!idsWithM.length) return null;
-  const next4 = computeNext4(list, lastId);
-  let last = null;
-  for (const m of next4) {
-    if (idsWithM.includes(m.id)) last = m.id;
-  }
-  return last;
+/* Retorna o lastId efetivo: prioriza starLast, senão usa rotacao do banco */
+function getLastForGroup(groupKey) {
+  return starLast[groupKey] ?? rotacao[groupKey] ?? null;
 }
 
 /* ====== LOAD ====== */
@@ -308,13 +261,11 @@ async function loadRotacao() {
       rotacao[r.group_type] = r.last_medium_id || null;
     }
   }
+  starLast = { ...rotacao };
 }
 
 async function loadChamadasForDate(iso) {
   chamadasMap = new Map();
-  tsMesa.clear();
-  tsPsico.clear();
-
   const rows = await sbGet(`chamadas?select=medium_id,status&data=eq.${iso}`);
   for (const r of rows) {
     chamadasMap.set(r.medium_id, (r.status || "").toUpperCase());
@@ -328,13 +279,11 @@ function computeTargetsFromRotacao() {
   const des = eligible("desenvolvimento");
   const ps  = eligiblePsicoDirigentes();
 
-  const nextMesaDir = computeNext(dir, rotacao.mesa_dirigente);
-  const incWhoSat = currentDateISO ? inc.filter((m) => (chamadasMap.get(m.id) || "").toUpperCase() === "M").map((m) => m.id) : [];
-  const desWhoSat = currentDateISO ? des.filter((m) => (chamadasMap.get(m.id) || "").toUpperCase() === "M").map((m) => m.id) : [];
-  const nextMesaInc4 = computeNext4Excluding(inc, rotacao.mesa_incorporacao, incWhoSat);
-  const nextMesaDes4 = computeNext4Excluding(des, rotacao.mesa_desenvolvimento, desWhoSat);
+  const nextMesaDir = computeNext(dir, getLastForGroup("mesa_dirigente"));
+  const nextMesaInc4 = computeNext4(inc, getLastForGroup("mesa_incorporacao"));
+  const nextMesaDes4 = computeNext4(des, getLastForGroup("mesa_desenvolvimento"));
 
-  const nextPsico = computeNextSkip(ps, rotacao.psicografia, nextMesaDir ? nextMesaDir.id : null);
+  const nextPsico = computeNextSkip(ps, getLastForGroup("psicografia"), nextMesaDir ? nextMesaDir.id : null);
 
   nextTargets = {
     mesa_dirigente: nextMesaDir ? nextMesaDir.id : null,
@@ -403,6 +352,27 @@ function makeRow(m) {
   const left = document.createElement("div");
   left.className = "itemLeft";
 
+  const starBtn = document.createElement("button");
+  starBtn.type = "button";
+  starBtn.className = "btnStar";
+  starBtn.title = "Clique para indicar que esta pessoa foi a última a sentar na mesa (a rotação parte do próximo)";
+  starBtn.textContent = "★";
+  const st = (chamadasMap.get(m.id) || "").toUpperCase();
+  const groupKey = m.group_type === "dirigente"
+    ? (st === "M" ? "mesa_dirigente" : st === "PS" ? "psicografia" : null)
+    : m.group_type === "incorporacao" ? "mesa_incorporacao" : m.group_type === "desenvolvimento" ? "mesa_desenvolvimento" : null;
+  if (groupKey) {
+    const isStarred = starLast[groupKey] === m.id;
+    starBtn.classList.toggle("starred", isStarred);
+    starBtn.addEventListener("click", () => {
+      starLast[groupKey] = m.id;
+      renderChamada();
+    });
+  } else {
+    starBtn.style.visibility = "hidden";
+    starBtn.disabled = true;
+  }
+
   const title = document.createElement("div");
   title.className = "itemName";
   title.textContent = nameOf(m);
@@ -422,8 +392,12 @@ function makeRow(m) {
   }
   meta.textContent = metaText;
 
-  left.appendChild(title);
-  left.appendChild(meta);
+  const leftText = document.createElement("div");
+  leftText.className = "itemLeftText";
+  leftText.appendChild(title);
+  leftText.appendChild(meta);
+  left.appendChild(starBtn);
+  left.appendChild(leftText);
 
   const right = document.createElement("div");
   right.className = "itemRight";
@@ -462,11 +436,7 @@ function makeRow(m) {
         return;
       }
       chamadasMap.set(m.id, s);
-
-      if (s === "M") tsMesa.set(m.id, Date.now()); else tsMesa.delete(m.id);
-      if (s === "PS") tsPsico.set(m.id, Date.now()); else tsPsico.delete(m.id);
-
-      renderResumo();
+      renderChamada();
     });
 
     radios.appendChild(inp);
@@ -503,32 +473,10 @@ function renderChamada() {
 
 /* ====== SALVAR ====== */
 async function persistRotacaoFromClicks() {
-  const active = mediumsAll.filter((m) => m.active === true);
-  const inc = eligible("incorporacao");
-  const des = eligible("desenvolvimento");
-
-  const dirMesaIds = active
-    .filter((m) => m.group_type === "dirigente" && (chamadasMap.get(m.id) || "") === "M")
-    .map((m) => m.id);
-
-  const incMesaIds = active
-    .filter((m) => m.group_type === "incorporacao" && (chamadasMap.get(m.id) || "") === "M")
-    .map((m) => m.id);
-
-  const desMesaIds = active
-    .filter((m) => m.group_type === "desenvolvimento" && (chamadasMap.get(m.id) || "") === "M")
-    .map((m) => m.id);
-
-  const psicoIds = active
-    .filter((m) => m.group_type === "dirigente" && (chamadasMap.get(m.id) || "") === "PS")
-    .map((m) => m.id);
-
-  const dir = eligible("dirigente");
-  const ps = eligiblePsicoDirigentes();
-  const lastMesaDir = pickLastClicked(dirMesaIds, tsMesa, dir);
-  const lastMesaInc = pickLastForMesa4(incMesaIds, inc, rotacao.mesa_incorporacao);
-  const lastMesaDes = pickLastForMesa4(desMesaIds, des, rotacao.mesa_desenvolvimento);
-  let lastPsico = pickLastClicked(psicoIds, tsPsico, ps);
+  let lastMesaDir = starLast.mesa_dirigente;
+  let lastMesaInc = starLast.mesa_incorporacao;
+  let lastMesaDes = starLast.mesa_desenvolvimento;
+  let lastPsico = starLast.psicografia;
 
   // Garante que não seja a mesma pessoa em Mesa e Psicografia
   if (lastMesaDir && lastPsico && lastMesaDir === lastPsico) {
@@ -539,7 +487,7 @@ async function persistRotacaoFromClicks() {
   if (lastMesaDir) await sbUpsertRotacao("mesa_dirigente", lastMesaDir);
   if (lastMesaInc) await sbUpsertRotacao("mesa_incorporacao", lastMesaInc);
   if (lastMesaDes) await sbUpsertRotacao("mesa_desenvolvimento", lastMesaDes);
-  if (lastPsico)   await sbUpsertRotacao("psicografia", lastPsico);
+  if (lastPsico) await sbUpsertRotacao("psicografia", lastPsico);
 }
 
 async function onSalvarTudo() {
@@ -848,7 +796,7 @@ function showTab(which) {
   if (!isChamada) renderParticipants();
 }
 
-/* Carrega a última chamada para que "Próximos" exclua quem já sentou */
+/* Carrega a última chamada para pré-preencher data e status */
 async function loadUltimaChamada() {
   try {
     const rows = await sbGet("chamadas?select=data&order=data.desc&limit=1");
