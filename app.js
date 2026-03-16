@@ -222,6 +222,28 @@ function computeNext4(list, lastId) {
   return result;
 }
 
+/* Retorna os 4 próximos EXCLUINDO os 4 que sentaram (evita repetir na volta da fila circular) */
+function computeNext4ExcludingLast4(list, lastId) {
+  if (!list.length) return [];
+  const len = list.length;
+  const idx = !lastId ? -1 : list.findIndex((x) => x.id === lastId);
+  const startIdx = (idx + 1) % len;
+  const whoSat = idx >= 0 ? new Set([
+    list[(idx - 3 + len) % len]?.id,
+    list[(idx - 2 + len) % len]?.id,
+    list[(idx - 1 + len) % len]?.id,
+    list[idx]?.id
+  ].filter(Boolean)) : new Set();
+  const result = [];
+  let i = 0;
+  while (result.length < 4 && i < len) {
+    const m = list[(startIdx + i) % len];
+    if (m && !whoSat.has(m.id)) result.push(m);
+    i++;
+  }
+  return result;
+}
+
 function computeNextSkip(list, lastId, skipId) {
   if (!list.length) return null;
   let n = computeNext(list, lastId);
@@ -304,8 +326,8 @@ function computeTargetsFromRotacao() {
   const ps  = eligiblePsicoDirigentes();
 
   const nextMesaDir = computeNext(dir, rotacao.mesa_dirigente);
-  const nextMesaInc4 = computeNext4(inc, rotacao.mesa_incorporacao);
-  const nextMesaDes4 = computeNext4(des, rotacao.mesa_desenvolvimento);
+  const nextMesaInc4 = computeNext4ExcludingLast4(inc, rotacao.mesa_incorporacao);
+  const nextMesaDes4 = computeNext4ExcludingLast4(des, rotacao.mesa_desenvolvimento);
 
   const nextPsico = computeNextSkip(ps, rotacao.psicografia, nextMesaDir ? nextMesaDir.id : null);
 
