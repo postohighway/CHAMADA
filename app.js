@@ -819,6 +819,13 @@ function showTab(which) {
   btnSalvar.addEventListener("click", onSalvarTudo);
   btnImprimirProxima.addEventListener("click", onImprimirProxima);
 
+  const btnForcarAtualizacao = document.getElementById("btnForcarAtualizacao");
+  if (btnForcarAtualizacao) {
+    btnForcarAtualizacao.addEventListener("click", () => {
+      window.location.replace(window.location.pathname + "?nocache=" + Date.now());
+    });
+  }
+
   tabChamada.addEventListener("click", () => showTab("chamada"));
   tabParticipantes.addEventListener("click", () => showTab("participantes"));
 

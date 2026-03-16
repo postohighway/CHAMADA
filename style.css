@@ -38,7 +38,9 @@ h1{margin:0 0 4px; font-size:22px; letter-spacing:.2px}
 
 .versionPill{
   margin-top:10px;
-  display:inline-block;
+  display:inline-flex;
+  align-items:center;
+  gap:8px;
   padding:6px 10px;
   border-radius:999px;
   background:rgba(18,47,65,.65);
@@ -46,6 +48,22 @@ h1{margin:0 0 4px; font-size:22px; letter-spacing:.2px}
   color:var(--muted);
   font-size:12px;
 }
+.btnRefresh{
+  background:rgba(59,130,246,.25);
+  border:1px solid rgba(59,130,246,.4);
+  color:var(--txt);
+  width:28px;
+  height:28px;
+  border-radius:50%;
+  cursor:pointer;
+  font-size:16px;
+  padding:0;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+}
+.btnRefresh:hover{ opacity:.9 }
+.btnRefresh:active{ transform:scale(.95) }
 
 .tabs{margin-top:12px; display:flex; gap:8px; flex-wrap:wrap}
 .tabBtn{

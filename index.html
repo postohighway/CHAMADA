@@ -3,6 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
   <title>Chamada de Médiuns</title>
 
   <!-- Cache-busting para iPhone (atalho/PWA) -->
@@ -16,7 +19,10 @@
       <p class="sub">Reunião: terça-feira 18:30 (exceto feriados)</p>
 
       <!-- Assinatura de versão (prova visual de cache correto) -->
-      <div class="versionPill">Versão: <strong>2026-03-16</strong></div>
+      <div class="versionPill">
+        Versão: <strong>2026-03-16</strong>
+        <button type="button" id="btnForcarAtualizacao" class="btnRefresh" title="Forçar atualização (limpar cache)">↻</button>
+      </div>
 
       <!-- Tabs -->
       <div class="tabs">
