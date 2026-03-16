@@ -1,14 +1,15 @@
 /* ============================================================
    CHAMADA DE MEDIUNS - app.js
-   Versao: 2026-01-21-a
+   Versao: 2026-03-16
    Destaques:
    - Ordem de fila por (ordem_grupo, sort_order, name)
-   - Destaque visual: amarelo (próximo mesa) / vermelho (próximo psicografia)
-   - Botão: Imprimir próxima chamada (próxima terça-feira)
-   - Participantes: botão "X" para desativar (remover do front) sem quebrar histórico
+   - Dirigente mesa: amarelo | Psicografia: vermelho
+   - Incorporação: 4 próximos em verde | Desenvolvimento: 4 próximos em azul claro
+   - Se faltou, rotação avança pelo último dos 4 que sentou
+   - Estatística "Vezes na mesa" (campo mesa em mediums)
    ============================================================ */
 
-console.log("APP.JS CARREGADO: 2026-01-21-a");
+console.log("APP.JS CARREGADO: 2026-03-16");
 
 /* ====== SUPABASE ====== */
 const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co";
@@ -135,15 +136,16 @@ let currentDateISO = null;
 
 let chamadasMap = new Map();
 
-/* timestamps de clique: last-click wins */
+/* timestamps de clique: last-click wins (dirigente mesa e psicografia) */
 const tsMesa = new Map();
 const tsPsico = new Map();
 
 /* Targets atuais (para destaque e impressão) */
+/* mesa_dirigente e psicografia: 1 id; mesa_incorporacao e mesa_desenvolvimento: array de 4 ids */
 let nextTargets = {
   mesa_dirigente: null,
-  mesa_incorporacao: null,
-  mesa_desenvolvimento: null,
+  mesa_incorporacao: [],   // 4 próximos para incorporação
+  mesa_desenvolvimento: [], // 4 próximos para desenvolvimento
   psicografia: null,
 };
 
@@ -195,6 +197,17 @@ function computeNext(list, lastId) {
   return list[(idx + 1) % list.length];
 }
 
+/* Retorna os 4 próximos na fila (para incorporação e desenvolvimento) */
+function computeNext4(list, lastId) {
+  if (!list.length) return [];
+  const startIdx = !lastId ? 0 : (list.findIndex((x) => x.id === lastId) + 1) % list.length;
+  const result = [];
+  for (let i = 0; i < 4; i++) {
+    result.push(list[(startIdx + i) % list.length]);
+  }
+  return result;
+}
+
 function computeNextSkip(list, lastId, skipId) {
   if (!list.length) return null;
   let n = computeNext(list, lastId);
@@ -215,6 +228,17 @@ function pickLastClicked(ids, tsMap) {
   }
   if (!bestId && ids.length) bestId = ids[ids.length - 1];
   return bestId;
+}
+
+/* Para mesa de 4: last = o último (4º) na ordem da fila entre os que marcaram M */
+function pickLastForMesa4(idsWithM, list, lastId) {
+  if (!idsWithM.length) return null;
+  const next4 = computeNext4(list, lastId);
+  let last = null;
+  for (const m of next4) {
+    if (idsWithM.includes(m.id)) last = m.id;
+  }
+  return last;
 }
 
 /* ====== LOAD ====== */
@@ -259,27 +283,27 @@ function computeTargetsFromRotacao() {
   const ps  = eligiblePsicoDirigentes();
 
   const nextMesaDir = computeNext(dir, rotacao.mesa_dirigente);
-  const nextMesaInc = computeNext(inc, rotacao.mesa_incorporacao);
-  const nextMesaDes = computeNext(des, rotacao.mesa_desenvolvimento);
+  const nextMesaInc4 = computeNext4(inc, rotacao.mesa_incorporacao);
+  const nextMesaDes4 = computeNext4(des, rotacao.mesa_desenvolvimento);
 
   const nextPsico = computeNextSkip(ps, rotacao.psicografia, nextMesaDir ? nextMesaDir.id : null);
 
   nextTargets = {
     mesa_dirigente: nextMesaDir ? nextMesaDir.id : null,
-    mesa_incorporacao: nextMesaInc ? nextMesaInc.id : null,
-    mesa_desenvolvimento: nextMesaDes ? nextMesaDes.id : null,
+    mesa_incorporacao: nextMesaInc4.map((m) => m.id),
+    mesa_desenvolvimento: nextMesaDes4.map((m) => m.id),
     psicografia: nextPsico ? nextPsico.id : null,
   };
 
-  return { nextMesaDir, nextMesaInc, nextMesaDes, nextPsico };
+  return { nextMesaDir, nextMesaInc4, nextMesaDes4, nextPsico };
 }
 
 function renderProximos() {
-  const { nextMesaDir, nextMesaInc, nextMesaDes, nextPsico } = computeTargetsFromRotacao();
+  const { nextMesaDir, nextMesaInc4, nextMesaDes4, nextPsico } = computeTargetsFromRotacao();
 
   nextMesaDirigenteName.textContent = nextMesaDir ? nameOf(nextMesaDir) : "—";
-  nextMesaIncorpName.textContent    = nextMesaInc ? nameOf(nextMesaInc) : "—";
-  nextMesaDesenvName.textContent    = nextMesaDes ? nameOf(nextMesaDes) : "—";
+  nextMesaIncorpName.textContent    = nextMesaInc4.length ? nextMesaInc4.map(nameOf).join(", ") : "—";
+  nextMesaDesenvName.textContent    = nextMesaDes4.length ? nextMesaDes4.map(nameOf).join(", ") : "—";
   nextPsicoDirigenteName.textContent= nextPsico ? nameOf(nextPsico) : "—";
 }
 
@@ -318,16 +342,15 @@ function makeRow(m) {
   wrap.className = "itemRow";
 
   // Destaques por "próximo"
-  const isMesaNext =
-    (m.group_type === "dirigente" && m.id === nextTargets.mesa_dirigente) ||
-    (m.group_type === "incorporacao" && m.id === nextTargets.mesa_incorporacao) ||
-    (m.group_type === "desenvolvimento" && m.id === nextTargets.mesa_desenvolvimento);
+  const isMesaDirNext = m.group_type === "dirigente" && m.id === nextTargets.mesa_dirigente;
+  const isPsicoNext   = m.group_type === "dirigente" && m.id === nextTargets.psicografia;
+  const isIncorpNext = m.group_type === "incorporacao" && nextTargets.mesa_incorporacao.includes(m.id);
+  const isDesenvNext = m.group_type === "desenvolvimento" && nextTargets.mesa_desenvolvimento.includes(m.id);
 
-  const isPsicoNext =
-    (m.group_type === "dirigente" && m.id === nextTargets.psicografia);
-
-  if (isMesaNext) wrap.classList.add("nextMesa");
+  if (isMesaDirNext) wrap.classList.add("nextMesa");
   if (isPsicoNext) wrap.classList.add("nextPsico");
+  if (isIncorpNext) wrap.classList.add("nextIncorp");
+  if (isDesenvNext) wrap.classList.add("nextDesenv");
 
   const left = document.createElement("div");
   left.className = "itemLeft";
@@ -338,13 +361,18 @@ function makeRow(m) {
 
   const pres = Number(m.presencas || 0);
   const falt = Number(m.faltas || 0);
+  const mesaCount = Number(m.mesa ?? 0);
   const denom = pres + falt;
   const presPct = denom ? Math.round((pres / denom) * 100) : 0;
   const faltPct = denom ? Math.round((falt / denom) * 100) : 0;
 
   const meta = document.createElement("div");
   meta.className = "itemMeta";
-  meta.textContent = `Presenças: ${pres} | Faltas: ${falt} | Presença: ${presPct}% | Faltas: ${faltPct}%`;
+  let metaText = `Presenças: ${pres} | Faltas: ${falt} | Presença: ${presPct}% | Faltas: ${faltPct}%`;
+  if ((m.group_type === "incorporacao" || m.group_type === "desenvolvimento") && mesaCount > 0) {
+    metaText += ` | Vezes na mesa: ${mesaCount}`;
+  }
+  meta.textContent = metaText;
 
   left.appendChild(title);
   left.appendChild(meta);
@@ -428,6 +456,8 @@ function renderChamada() {
 /* ====== SALVAR ====== */
 async function persistRotacaoFromClicks() {
   const active = mediumsAll.filter((m) => m.active === true);
+  const inc = eligible("incorporacao");
+  const des = eligible("desenvolvimento");
 
   const dirMesaIds = active
     .filter((m) => m.group_type === "dirigente" && (chamadasMap.get(m.id) || "") === "M")
@@ -446,8 +476,8 @@ async function persistRotacaoFromClicks() {
     .map((m) => m.id);
 
   const lastMesaDir = pickLastClicked(dirMesaIds, tsMesa);
-  const lastMesaInc = pickLastClicked(incMesaIds, tsMesa);
-  const lastMesaDes = pickLastClicked(desMesaIds, tsMesa);
+  const lastMesaInc = pickLastForMesa4(incMesaIds, inc, rotacao.mesa_incorporacao);
+  const lastMesaDes = pickLastForMesa4(desMesaIds, des, rotacao.mesa_desenvolvimento);
   let lastPsico = pickLastClicked(psicoIds, tsPsico);
 
   // Garante que não seja a mesma pessoa em Mesa e Psicografia
@@ -530,7 +560,7 @@ function esc(s) {
 }
 
 function buildPrintDoc(dateISO) {
-  const { nextMesaDir, nextMesaInc, nextMesaDes, nextPsico } = computeTargetsFromRotacao();
+  const { nextMesaDir, nextMesaInc4, nextMesaDes4, nextPsico } = computeTargetsFromRotacao();
 
   const dir = eligible("dirigente");
   const inc = eligible("incorporacao");
@@ -576,8 +606,8 @@ function buildPrintDoc(dateISO) {
         <strong>Reservas sugeridas (para conferência):</strong><br/>
         Mesa Dirigente: <span class="tag warn">${esc(nextMesaDir ? nameOf(nextMesaDir) : "—")}</span>
         Psicografia: <span class="tag err">${esc(nextPsico ? nameOf(nextPsico) : "—")}</span><br/>
-        Mesa Incorporação: <span class="tag warn">${esc(nextMesaInc ? nameOf(nextMesaInc) : "—")}</span><br/>
-        Mesa Desenvolvimento: <span class="tag warn">${esc(nextMesaDes ? nameOf(nextMesaDes) : "—")}</span>
+        Mesa Incorporação: <span class="tag inc">${esc(nextMesaInc4.length ? nextMesaInc4.map(nameOf).join(", ") : "—")}</span><br/>
+        Mesa Desenvolvimento: <span class="tag des">${esc(nextMesaDes4.length ? nextMesaDes4.map(nameOf).join(", ") : "—")}</span>
       </div>
       <div style="margin-top:10px; color:#333;">
         Observação: esta impressão é um “backup” para fazer a chamada manualmente se o sistema falhar.
@@ -600,6 +630,8 @@ function buildPrintDoc(dateISO) {
     .tag{display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; border:1px solid #999}
     .warn{background:#fff4d6; border-color:#f59e0b}
     .err{background:#ffe3e3; border-color:#ef4444}
+    .inc{background:#d1fae5; border-color:#10b981}
+    .des{background:#dbeafe; border-color:#3b82f6}
     table{width:100%; border-collapse:collapse; margin-top:6px}
     th,td{border:1px solid #999; padding:6px 8px; font-size:12px}
     th{background:#efefef; text-align:left}

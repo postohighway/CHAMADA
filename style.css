@@ -233,6 +233,24 @@ main{padding:16px 0 40px}
   letter-spacing:.35px;
 }
 
+/* Incorporação: 4 próximos em verde */
+.itemRow.nextIncorp{
+  border-color:rgba(16,185,129,.55);
+  background:rgba(16,185,129,.12);
+}
+.itemRow.nextIncorp .itemName{
+  letter-spacing:.2px;
+}
+
+/* Desenvolvimento: 4 próximos em azul claro */
+.itemRow.nextDesenv{
+  border-color:rgba(96,165,250,.55);
+  background:rgba(96,165,250,.12);
+}
+.itemRow.nextDesenv .itemName{
+  letter-spacing:.2px;
+}
+
 /* PARTICIPANTES */
 .actionsRow{margin-top:10px; display:flex; justify-content:flex-end}
 .sep{border:0; border-top:1px solid var(--line); margin:16px 0}
