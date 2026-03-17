@@ -5,7 +5,7 @@
    - Ordem de fila por (ordem_grupo, sort_order, name)
    - Dirigente mesa: amarelo | Psicografia: vermelho
    - Incorporação: 4 próximos em verde | Desenvolvimento: 4 próximos em azul claro
-   - Se faltou, rotação avança pelo último dos 4 que sentou
+   - Se faltou (F), rotação pula para o próximo disponível
    - Estatística "Vezes na mesa" (campo mesa em mediums)
    ============================================================ */
 
@@ -226,6 +226,38 @@ function computeNext4(list, lastId) {
   return result;
 }
 
+/* Verifica se a pessoa está marcada F (falta) na data atual */
+function isFalta(m) {
+  return (chamadasMap.get(m.id) || "").toUpperCase() === "F";
+}
+
+/* Próximo na fila PULANDO quem está marcado F (falta) - rotação desce para o próximo disponível */
+function computeNextExcludingF(list, lastId) {
+  if (!list.length) return null;
+  const n = list.length;
+  const startIdx = !lastId ? -1 : list.findIndex((x) => x.id === lastId);
+  for (let i = 1; i <= n; i++) {
+    const idx = (startIdx + i) % n;
+    const m = list[idx];
+    if (!isFalta(m)) return m;
+  }
+  return null;
+}
+
+/* 4 próximos na fila PULANDO quem está marcado F */
+function computeNext4ExcludingF(list, lastId) {
+  if (!list.length) return [];
+  const n = list.length;
+  const startIdx = !lastId ? -1 : list.findIndex((x) => x.id === lastId);
+  const result = [];
+  for (let i = 1; i <= n * 2 && result.length < 4; i++) {
+    const idx = (startIdx + i) % n;
+    const m = list[idx];
+    if (!isFalta(m)) result.push(m);
+  }
+  return result;
+}
+
 
 function computeNextSkip(list, lastId, skipId) {
   if (!list.length) return null;
@@ -279,11 +311,15 @@ function computeTargetsFromRotacao() {
   const des = eligible("desenvolvimento");
   const ps  = eligiblePsicoDirigentes();
 
-  const nextMesaDir = computeNext(dir, getLastForGroup("mesa_dirigente"));
-  const nextMesaInc4 = computeNext4(inc, getLastForGroup("mesa_incorporacao"));
-  const nextMesaDes4 = computeNext4(des, getLastForGroup("mesa_desenvolvimento"));
+  /* Usa versões que PULAM quem está F (falta): rotação desce para o próximo disponível */
+  const nextMesaDir = computeNextExcludingF(dir, getLastForGroup("mesa_dirigente"));
+  const nextMesaInc4 = computeNext4ExcludingF(inc, getLastForGroup("mesa_incorporacao"));
+  const nextMesaDes4 = computeNext4ExcludingF(des, getLastForGroup("mesa_desenvolvimento"));
 
-  const nextPsico = computeNextSkip(ps, getLastForGroup("psicografia"), nextMesaDir ? nextMesaDir.id : null);
+  let nextPsico = computeNextExcludingF(ps, getLastForGroup("psicografia"));
+  if (nextPsico && nextMesaDir && nextPsico.id === nextMesaDir.id) {
+    nextPsico = computeNextExcludingF(ps, nextPsico.id);
+  }
 
   nextTargets = {
     mesa_dirigente: nextMesaDir ? nextMesaDir.id : null,
