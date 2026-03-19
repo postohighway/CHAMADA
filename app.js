@@ -602,28 +602,29 @@ function buildPrintDoc(dateISO) {
   const des = eligible("desenvolvimento");
   const car = eligible("carencia");
 
-  function rowClass(m, opts) {
+  function rowStyle(m, opts) {
     if (!opts.highlight) return "";
     const h = opts.highlight;
-    if (h.mesaDirId && m.id === h.mesaDirId) return "rowMesa";
-    if (h.psicoId && m.id === h.psicoId) return "rowPsico";
-    if (h.incIds && h.incIds.includes(m.id)) return "rowInc";
-    if (h.desIds && h.desIds.includes(m.id)) return "rowDes";
+    const printFix = "-webkit-print-color-adjust:exact;print-color-adjust:exact;";
+    if (h.mesaDirId && m.id === h.mesaDirId) return `background:#fff4d6 !important;border-left:4px solid #f59e0b;font-weight:600;${printFix}`;
+    if (h.psicoId && m.id === h.psicoId) return `background:#ffe3e3 !important;border-left:4px solid #ef4444;font-weight:600;${printFix}`;
+    if (h.incIds && h.incIds.includes(m.id)) return `background:#d1fae5 !important;border-left:4px solid #10b981;${printFix}`;
+    if (h.desIds && h.desIds.includes(m.id)) return `background:#dbeafe !important;border-left:4px solid #3b82f6;${printFix}`;
     return "";
   }
 
   function mkTable(list, opts={ ps:false }) {
     const cols = opts.ps ? "<th>PS</th>" : "";
     const rows = list.map((m, i) => {
-      const cls = rowClass(m, opts);
+      const cellStyle = rowStyle(m, opts);
       return `
-      <tr${cls ? ` class="${cls}"` : ""}>
-        <td style="width:36px; text-align:right;">${i+1}</td>
-        <td>${esc(nameOf(m))}</td>
-        <td style="text-align:center;">[ ]</td>
-        <td style="text-align:center;">[ ]</td>
-        <td style="text-align:center;">[ ]</td>
-        ${opts.ps ? '<td style="text-align:center;">[ ]</td>' : ''}
+      <tr>
+        <td style="width:36px;text-align:right;${cellStyle}">${i+1}</td>
+        <td style="${cellStyle}">${esc(nameOf(m))}</td>
+        <td style="text-align:center;${cellStyle}">[ ]</td>
+        <td style="text-align:center;${cellStyle}">[ ]</td>
+        <td style="text-align:center;${cellStyle}">[ ]</td>
+        ${opts.ps ? `<td style="text-align:center;${cellStyle}">[ ]</td>` : ''}
       </tr>
     `;
     }).join("");
@@ -686,17 +687,14 @@ function buildPrintDoc(dateISO) {
     table{width:100%; border-collapse:collapse; margin-top:6px}
     th,td{border:1px solid #999; padding:6px 8px; font-size:12px}
     th{background:#efefef; text-align:left}
-    .rowMesa td{background:#fff4d6 !important; border-left:3px solid #f59e0b; font-weight:600}
-    .rowPsico td{background:#ffe3e3 !important; border-left:3px solid #ef4444; font-weight:600}
-    .rowInc td{background:#d1fae5 !important; border-left:3px solid #10b981}
-    .rowDes td{background:#dbeafe !important; border-left:3px solid #3b82f6}
-    .rowMesa td,.rowPsico td,.rowInc td,.rowDes td{-webkit-print-color-adjust:exact; print-color-adjust:exact}
     @media print{ .noPrint{display:none} }
+    @media print{ td[style*="background"]{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important } }
   </style>
 </head>
 <body>
   <div class="noPrint" style="text-align:right; margin-bottom:10px;">
     <button onclick="window.print()">Imprimir</button>
+    <span style="margin-left:12px; font-size:12px; color:#666;">Dica: ative "Gráficos de fundo" nas opções de impressão para ver as cores.</span>
   </div>
 
   <h1>Chamada de Médiuns - ${formatBR(dateISO)}</h1>
