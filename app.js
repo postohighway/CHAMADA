@@ -602,10 +602,22 @@ function buildPrintDoc(dateISO) {
   const des = eligible("desenvolvimento");
   const car = eligible("carencia");
 
+  function rowClass(m, opts) {
+    if (!opts.highlight) return "";
+    const h = opts.highlight;
+    if (h.mesaDirId && m.id === h.mesaDirId) return "rowMesa";
+    if (h.psicoId && m.id === h.psicoId) return "rowPsico";
+    if (h.incIds && h.incIds.includes(m.id)) return "rowInc";
+    if (h.desIds && h.desIds.includes(m.id)) return "rowDes";
+    return "";
+  }
+
   function mkTable(list, opts={ ps:false }) {
     const cols = opts.ps ? "<th>PS</th>" : "";
-    const rows = list.map((m, i) => `
-      <tr>
+    const rows = list.map((m, i) => {
+      const cls = rowClass(m, opts);
+      return `
+      <tr${cls ? ` class="${cls}"` : ""}>
         <td style="width:36px; text-align:right;">${i+1}</td>
         <td>${esc(nameOf(m))}</td>
         <td style="text-align:center;">[ ]</td>
@@ -613,7 +625,8 @@ function buildPrintDoc(dateISO) {
         <td style="text-align:center;">[ ]</td>
         ${opts.ps ? '<td style="text-align:center;">[ ]</td>' : ''}
       </tr>
-    `).join("");
+    `;
+    }).join("");
 
     return `
       <table>
@@ -644,7 +657,10 @@ function buildPrintDoc(dateISO) {
         Mesa Incorporação: <span class="tag inc">${esc(nextMesaInc4.length ? nextMesaInc4.map(nameOf).join(", ") : "—")}</span><br/>
         Mesa Desenvolvimento: <span class="tag des">${esc(nextMesaDes4.length ? nextMesaDes4.map(nameOf).join(", ") : "—")}</span>
       </div>
-      <div style="margin-top:10px; color:#333;">
+      <div style="margin-top:10px; color:#333; font-size:12px;">
+        <strong>Marcação na lista:</strong> amarelo = Dirigente (Mesa) | vermelho = Psicografia | verde = 4 Incorporação | azul = 4 Desenvolvimento
+      </div>
+      <div style="margin-top:6px; color:#666; font-size:11px;">
         Observação: esta impressão é um “backup” para fazer a chamada manualmente se o sistema falhar.
       </div>
     </div>
@@ -670,6 +686,11 @@ function buildPrintDoc(dateISO) {
     table{width:100%; border-collapse:collapse; margin-top:6px}
     th,td{border:1px solid #999; padding:6px 8px; font-size:12px}
     th{background:#efefef; text-align:left}
+    .rowMesa td{background:#fff4d6 !important; border-left:3px solid #f59e0b; font-weight:600}
+    .rowPsico td{background:#ffe3e3 !important; border-left:3px solid #ef4444; font-weight:600}
+    .rowInc td{background:#d1fae5 !important; border-left:3px solid #10b981}
+    .rowDes td{background:#dbeafe !important; border-left:3px solid #3b82f6}
+    .rowMesa td,.rowPsico td,.rowInc td,.rowDes td{-webkit-print-color-adjust:exact; print-color-adjust:exact}
     @media print{ .noPrint{display:none} }
   </style>
 </head>
@@ -682,13 +703,13 @@ function buildPrintDoc(dateISO) {
   ${reservas}
 
   <h2>Dirigentes</h2>
-  ${mkTable(dir, {ps:true})}
+  ${mkTable(dir, { ps: true, highlight: { mesaDirId: nextMesaDir?.id, psicoId: nextPsico?.id } })}
 
   <h2>Médiuns de Incorporação</h2>
-  ${mkTable(inc)}
+  ${mkTable(inc, { highlight: { incIds: nextMesaInc4.map(m => m.id) } })}
 
   <h2>Médiuns em Desenvolvimento</h2>
-  ${mkTable(des)}
+  ${mkTable(des, { highlight: { desIds: nextMesaDes4.map(m => m.id) } })}
 
   <h2>Médiuns em Carência</h2>
   ${mkTable(car)}
