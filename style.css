@@ -204,7 +204,31 @@ main{padding:16px 0 40px}
   border:1px solid var(--line);
   background:rgba(11,35,50,.55);
 }
-.itemLeft{min-width:220px}
+.itemLeft{min-width:220px; display:flex; align-items:flex-start; gap:10px}
+.itemLeftText{flex:1; min-width:0}
+.btnStar{
+  flex-shrink:0;
+  width:28px; height:28px;
+  border-radius:8px;
+  border:1px solid var(--line);
+  background:rgba(18,47,65,.6);
+  color:var(--muted);
+  font-size:16px;
+  cursor:pointer;
+  padding:0;
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  transition:color .15s, background .15s, border-color .15s;
+}
+.btnStar:hover{ color:var(--warn); border-color:rgba(245,158,11,.4); background:rgba(245,158,11,.12) }
+.btnStar.starred{ color:var(--warn); border-color:rgba(245,158,11,.5); background:rgba(245,158,11,.2) }
+/* Dirigentes: segunda estrela = psicografia (vermelho) */
+.starGroup{display:flex; flex-direction:column; gap:4px; flex-shrink:0}
+.starGroup .btnStar{ width:28px; height:26px; font-size:14px }
+.starGroup .starLabel{font-size:9px; color:var(--muted); text-align:center; line-height:1; user-select:none}
+.btnStarPsico:hover{ color:#f87171; border-color:rgba(239,68,68,.45); background:rgba(239,68,68,.12) }
+.btnStarPsico.starred{ color:#fca5a5; border-color:rgba(239,68,68,.55); background:rgba(239,68,68,.18) }
 .itemName{font-weight:650; letter-spacing:.15px}
 .itemMeta{margin-top:4px; color:var(--muted); font-size:12px}
 .itemRight{display:flex; align-items:center; justify-content:flex-end; gap:10px; flex-wrap:wrap}
@@ -233,18 +257,20 @@ main{padding:16px 0 40px}
 .radioGroup input:checked + .radioLbl .dot{background:rgba(59,130,246,.85)}
 .radioTxt{font-size:12px}
 
-/* ===== Destaques de "próximos" ===== */
+/* ===== Destaques de "próximos" (linhas pintadas no corpo da chamada) ===== */
 .itemRow.nextMesa{
-  border-color:rgba(245,158,11,.55);
-  background:rgba(245,158,11,.10);
+  border-color:rgba(245,158,11,.7);
+  border-left:4px solid #f59e0b;
+  background:rgba(245,158,11,.22);
 }
 .itemRow.nextMesa .itemName{
   text-transform:uppercase;
   letter-spacing:.35px;
 }
 .itemRow.nextPsico{
-  border-color:rgba(239,68,68,.55);
-  background:rgba(239,68,68,.10);
+  border-color:rgba(239,68,68,.7);
+  border-left:4px solid #ef4444;
+  background:rgba(239,68,68,.22);
 }
 .itemRow.nextPsico .itemName{
   text-transform:uppercase;
@@ -253,8 +279,9 @@ main{padding:16px 0 40px}
 
 /* Incorporação: 4 próximos em verde */
 .itemRow.nextIncorp{
-  border-color:rgba(16,185,129,.55);
-  background:rgba(16,185,129,.12);
+  border-color:rgba(16,185,129,.7);
+  border-left:4px solid #10b981;
+  background:rgba(16,185,129,.22);
 }
 .itemRow.nextIncorp .itemName{
   letter-spacing:.2px;
@@ -262,8 +289,9 @@ main{padding:16px 0 40px}
 
 /* Desenvolvimento: 4 próximos em azul claro */
 .itemRow.nextDesenv{
-  border-color:rgba(96,165,250,.55);
-  background:rgba(96,165,250,.12);
+  border-color:rgba(96,165,250,.7);
+  border-left:4px solid #60a5fa;
+  background:rgba(96,165,250,.22);
 }
 .itemRow.nextDesenv .itemName{
   letter-spacing:.2px;

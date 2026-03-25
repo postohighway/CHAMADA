@@ -6,6 +6,7 @@
    - Dirigente mesa: amarelo | Psicografia: vermelho
    - Incorporação: 4 próximos em verde | Desenvolvimento: 4 próximos em azul claro
    - Se faltou (F), rotação pula para o próximo disponível
+   - Dirigentes: duas estrelas (Mesa + Psicografia), sempre visíveis
    - Estatística "Vezes na mesa" (campo mesa em mediums)
    ============================================================ */
 
@@ -388,25 +389,65 @@ function makeRow(m) {
   const left = document.createElement("div");
   left.className = "itemLeft";
 
-  const starBtn = document.createElement("button");
-  starBtn.type = "button";
-  starBtn.className = "btnStar";
-  starBtn.title = "Clique para indicar que esta pessoa foi a última a sentar na mesa (a rotação parte do próximo)";
-  starBtn.textContent = "★";
-  const st = (chamadasMap.get(m.id) || "").toUpperCase();
-  const groupKey = m.group_type === "dirigente"
-    ? (st === "M" ? "mesa_dirigente" : st === "PS" ? "psicografia" : null)
-    : m.group_type === "incorporacao" ? "mesa_incorporacao" : m.group_type === "desenvolvimento" ? "mesa_desenvolvimento" : null;
-  if (groupKey) {
-    const isStarred = starLast[groupKey] === m.id;
-    starBtn.classList.toggle("starred", isStarred);
+  const starWrap = document.createElement("div");
+  if (m.group_type === "dirigente") {
+    starWrap.className = "starGroup";
+
+    const lblM = document.createElement("span");
+    lblM.className = "starLabel";
+    lblM.textContent = "Mesa";
+
+    const starMesa = document.createElement("button");
+    starMesa.type = "button";
+    starMesa.className = "btnStar btnStarMesa";
+    starMesa.title = "Último a dirigir na MESA — a rotação de mesa parte do próximo";
+    starMesa.setAttribute("aria-label", "Estrela último na mesa");
+    starMesa.textContent = "★";
+    starMesa.classList.toggle("starred", starLast.mesa_dirigente === m.id);
+    starMesa.addEventListener("click", () => {
+      starLast.mesa_dirigente = m.id;
+      renderChamada();
+    });
+
+    const lblP = document.createElement("span");
+    lblP.className = "starLabel";
+    lblP.textContent = "Psico";
+
+    const starPsico = document.createElement("button");
+    starPsico.type = "button";
+    starPsico.className = "btnStar btnStarPsico";
+    starPsico.title = "Último na PSICOGRAFIA — a rotação de psico parte do próximo";
+    starPsico.setAttribute("aria-label", "Estrela último na psicografia");
+    starPsico.textContent = "★";
+    starPsico.classList.toggle("starred", starLast.psicografia === m.id);
+    starPsico.addEventListener("click", () => {
+      starLast.psicografia = m.id;
+      renderChamada();
+    });
+
+    starWrap.appendChild(lblM);
+    starWrap.appendChild(starMesa);
+    starWrap.appendChild(lblP);
+    starWrap.appendChild(starPsico);
+  } else if (m.group_type === "incorporacao" || m.group_type === "desenvolvimento") {
+    const groupKey = m.group_type === "incorporacao" ? "mesa_incorporacao" : "mesa_desenvolvimento";
+    const starBtn = document.createElement("button");
+    starBtn.type = "button";
+    starBtn.className = "btnStar";
+    starBtn.title = "Último a sentar na mesa neste grupo — a rotação parte do próximo";
+    starBtn.textContent = "★";
+    starBtn.classList.toggle("starred", starLast[groupKey] === m.id);
     starBtn.addEventListener("click", () => {
       starLast[groupKey] = m.id;
       renderChamada();
     });
+    starWrap.appendChild(starBtn);
   } else {
-    starBtn.style.visibility = "hidden";
-    starBtn.disabled = true;
+    const placeholder = document.createElement("div");
+    placeholder.className = "starGroup";
+    placeholder.style.visibility = "hidden";
+    placeholder.style.width = "28px";
+    starWrap.appendChild(placeholder);
   }
 
   const title = document.createElement("div");
@@ -432,7 +473,7 @@ function makeRow(m) {
   leftText.className = "itemLeftText";
   leftText.appendChild(title);
   leftText.appendChild(meta);
-  left.appendChild(starBtn);
+  left.appendChild(starWrap);
   left.appendChild(leftText);
 
   const right = document.createElement("div");
