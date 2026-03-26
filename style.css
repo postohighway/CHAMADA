@@ -257,6 +257,22 @@ main{padding:16px 0 40px}
 .radioGroup input:checked + .radioLbl .dot{background:rgba(59,130,246,.85)}
 .radioTxt{font-size:12px}
 
+/* Carência na chamada: P/M/F + passar para desenvolvimento */
+.chamadaCarenciaRight{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-end;
+  gap:10px;
+  max-width:100%;
+}
+.btnPassarDesenvolvimento{
+  white-space:normal;
+  text-align:center;
+  line-height:1.25;
+  max-width:200px;
+}
+.hintCarencia{margin:4px 0 10px; font-size:12px; line-height:1.45}
+
 /* ===== Destaques de "próximos" (linhas pintadas no corpo da chamada) ===== */
 .itemRow.nextMesa{
   border-color:rgba(245,158,11,.7);
@@ -303,6 +319,32 @@ main{padding:16px 0 40px}
 .checks{display:flex; gap:14px; flex-wrap:wrap; margin-top:10px}
 .check{display:flex; gap:8px; align-items:center; color:var(--muted); font-size:13px}
 .empty{color:var(--muted); font-size:13px}
+.partRow{display:flex; flex-direction:column; gap:0}
+.partEditPanel{
+  margin:0 0 10px 0;
+  padding:12px 14px;
+  border-radius:12px;
+  border:1px solid var(--line);
+  background:rgba(7,26,39,.45);
+}
+.partEditGrid{display:grid; grid-template-columns:1fr 1fr; gap:10px 14px}
+@media (max-width:720px){ .partEditGrid{ grid-template-columns:1fr } }
+.partEditField .label{margin-bottom:4px; display:block}
+.partEditChecks{
+  grid-column:1 / -1;
+  display:flex;
+  flex-wrap:wrap;
+  gap:12px 18px;
+  margin-top:4px;
+}
+.partEditActions{
+  grid-column:1 / -1;
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+  margin-top:12px;
+  justify-content:flex-end;
+}
 
 /* ===== PRINT ===== */
 @media print{

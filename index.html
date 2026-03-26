@@ -100,6 +100,7 @@
       <div id="listaDesenvolvimento" class="list"></div>
 
       <h2 class="sectionTitle">Médiuns em Carência</h2>
+      <p class="muted hintCarencia">Quem concluir a carência pode ser enviado para <strong>Desenvolvimento</strong> pelo botão na linha. Outras alterações (nome, mesa, grupo) ficam na aba <strong>Participantes</strong> → Editar.</p>
       <div id="listaCarencia" class="list"></div>
     </section>
 
@@ -112,7 +113,7 @@
               <span class="dotLed"></span>
               <span>Participantes</span>
             </span>
-            <span class="muted">Adicionar / editar</span>
+            <span class="muted">Adicionar, editar e habilitar mesa</span>
           </div>
         </div>
 
@@ -142,6 +143,9 @@
           <div id="partErr" class="msgErr"></div>
         </div>
 
+        <p class="muted" style="margin:8px 0 0; font-size:12px;">
+          <strong>Editar</strong>: nome, grupo (ex. trocar Carência → Incorporação), ativo, ordem e se pode sentar na mesa. Na aba Chamada, quem está em Carência também tem o botão rápido <strong>Passar para Desenvolvimento</strong>. Se der erro ao salvar, rode <code>Querys/adicionar_pode_mesa.sql</code> no Supabase.
+        </p>
         <div id="listaParticipantes" class="list"></div>
 
         <hr class="sep" />
