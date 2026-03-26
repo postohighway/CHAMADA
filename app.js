@@ -326,6 +326,7 @@ async function loadMediums() {
       throw e;
     }
   }
+  await mergeCarenciaMetaIntoMediums();
 }
 
 /* Conta presenças e faltas a partir de todas as linhas em chamadas (P, M, PS = presença; F = falta). */
@@ -351,18 +352,13 @@ async function syncPresenceStatsFromChamadas() {
   for (const m of mediumsAll) {
     if (!m.active) continue;
     const { pres, fal } = agg.get(m.id) || { pres: 0, fal: 0 };
-    const metaN = Number(m.carencia_meta_presencas);
+    const metaN = getCarenciaMetaN(m);
     const patch = {};
     if (Number(m.presencas || 0) !== pres || Number(m.faltas || 0) !== fal) {
       patch.presencas = pres;
       patch.faltas = fal;
     }
-    if (
-      m.group_type === "carencia" &&
-      Number.isFinite(metaN) &&
-      metaN > 0 &&
-      pres >= metaN
-    ) {
+    if (m.group_type === "carencia" && metaN != null && pres >= metaN) {
       patch.group_type = "desenvolvimento";
       patch.carencia_meta_presencas = null;
     }
@@ -393,6 +389,33 @@ function parseMetaCarenciaInput(val) {
   const n = parseInt(s, 10);
   if (!Number.isFinite(n) || n < 1) return null;
   return n;
+}
+
+/* Meta na carência vinda do banco (evita Number(null) === 0 e campos omitidos no JSON). */
+function getCarenciaMetaN(m) {
+  if (!m || m.group_type !== "carencia") return null;
+  const v = m.carencia_meta_presencas;
+  if (v === undefined || v === null || v === "") return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < 1) return null;
+  return n;
+}
+
+/* Garante carencia_meta_presencas nos objetos (GET dedicado — o select amplo às vezes não devolve o campo). */
+async function mergeCarenciaMetaIntoMediums() {
+  try {
+    const rows = await sbGet(
+      "mediums?select=id,carencia_meta_presencas&group_type=eq.carencia&active=eq.true"
+    );
+    const map = new Map(rows.map((r) => [r.id, r.carencia_meta_presencas]));
+    for (const m of mediumsAll) {
+      if (map.has(m.id)) {
+        m.carencia_meta_presencas = map.get(m.id);
+      }
+    }
+  } catch (_) {
+    /* Coluna inexistente ou sem permissão */
+  }
 }
 
 async function loadRotacao() {
@@ -502,9 +525,9 @@ function statusParaResumo(med) {
 /* Texto de acompanhamento meta carência → desenvolvimento */
 function textoMetaCarencia(m) {
   if (m.group_type !== "carencia") return "";
-  const metaN = Number(m.carencia_meta_presencas);
+  const metaN = getCarenciaMetaN(m);
   const p = Number(m.presencas || 0);
-  if (!Number.isFinite(metaN) || metaN < 1) {
+  if (metaN == null) {
     return " | Carência: defina em Participantes → Editar quantas presenças (P ou PS) são necessárias para ir a Desenvolvimento";
   }
   const falta = Math.max(0, metaN - p);
@@ -1149,8 +1172,8 @@ function buildParticipantEditPanel(m, onClose) {
   inpMetaCarencia.className = "input";
   inpMetaCarencia.placeholder = "Ex.: 6 (vazio = sem meta)";
   {
-    const metaN0 = Number(m.carencia_meta_presencas);
-    if (Number.isFinite(metaN0) && metaN0 > 0) inpMetaCarencia.value = String(metaN0);
+    const metaN0 = getCarenciaMetaN(m);
+    if (metaN0 != null) inpMetaCarencia.value = String(metaN0);
   }
 
   const wrapMetaCarencia = document.createElement("div");
@@ -1299,9 +1322,9 @@ function renderParticipants() {
     const carTxt =
       m.group_type === "carencia"
         ? (() => {
-            const metaN = Number(m.carencia_meta_presencas);
+            const metaN = getCarenciaMetaN(m);
             const p = Number(m.presencas || 0);
-            if (!Number.isFinite(metaN) || metaN < 1) {
+            if (metaN == null) {
               return " | Carência: sem meta — edite e informe presenças até Dev.";
             }
             const falta = Math.max(0, metaN - p);
