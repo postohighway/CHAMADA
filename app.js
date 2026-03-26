@@ -8,6 +8,7 @@
    - Se faltou (F), rotação pula para o próximo disponível
    - Dirigentes: duas estrelas (Mesa + Psicografia), sempre visíveis
    - Incorporação: todos na rotação da mesa; Desenvolvimento/Dirigente: pode_mesa (legado mesa)
+   - Carência: meta de presenças (P/M/PS nas chamadas) → migra auto para Desenvolvimento ao salvar
    ============================================================ */
 
 console.log("APP.JS CARREGADO: 2026-03-16");
@@ -137,7 +138,13 @@ const novoGrupo = must("novoGrupo");
 const novoAtivo = must("novoAtivo");
 const novoMesa = must("novoMesa");
 const novoPsico = must("novoPsico");
+const novoMetaCarencia = must("novoMetaCarencia");
+const novoMetaCarenciaWrap = must("novoMetaCarenciaWrap");
 const btnAdicionarParticipante = must("btnAdicionarParticipante");
+
+function syncNovoMetaCarenciaWrap() {
+  novoMetaCarenciaWrap.style.display = novoGrupo.value === "carencia" ? "" : "none";
+}
 
 /* ====== ESTADO ====== */
 let mediumsAll = [];
@@ -294,20 +301,98 @@ function getLastForGroup(groupKey) {
 
 /* ====== LOAD ====== */
 async function loadMediums() {
-  const selFull =
-    "id,name,group_type,active,presencas,faltas,mesa,psicografia,pode_mesa,ordem_grupo,sort_order";
-  const selLegacy =
+  const base =
     "id,name,group_type,active,presencas,faltas,mesa,psicografia,ordem_grupo,sort_order";
+  const withPs = `${base},pode_mesa`;
+  const withAll = `${withPs},carencia_meta_presencas`;
   try {
-    mediumsAll = await sbGet(`mediums?select=${selFull}`);
+    mediumsAll = await sbGet(`mediums?select=${withAll}`);
   } catch (e) {
     const t = e.message || String(e);
-    if (t.includes("pode_mesa") || t.includes("column")) {
-      mediumsAll = await sbGet(`mediums?select=${selLegacy}`);
+    if (t.includes("carencia_meta_presencas")) {
+      try {
+        mediumsAll = await sbGet(`mediums?select=${withPs}`);
+      } catch (e2) {
+        const t2 = e2.message || String(e2);
+        if (t2.includes("pode_mesa")) {
+          mediumsAll = await sbGet(`mediums?select=${base}`);
+        } else {
+          throw e2;
+        }
+      }
+    } else if (t.includes("pode_mesa")) {
+      mediumsAll = await sbGet(`mediums?select=${base}`);
     } else {
       throw e;
     }
   }
+}
+
+/* Conta presenças e faltas a partir de todas as linhas em chamadas (P, M, PS = presença; F = falta). */
+async function syncPresenceStatsFromChamadas() {
+  const promoted = [];
+  let chRows;
+  try {
+    chRows = await sbGet("chamadas?select=medium_id,status");
+  } catch (e) {
+    return promoted;
+  }
+  const agg = new Map();
+  for (const r of chRows) {
+    const id = r.medium_id;
+    if (id == null) continue;
+    const st = (r.status || "").toUpperCase();
+    if (!agg.has(id)) agg.set(id, { pres: 0, fal: 0 });
+    const c = agg.get(id);
+    if (st === "F") c.fal += 1;
+    else if (st === "P" || st === "M" || st === "PS") c.pres += 1;
+  }
+
+  for (const m of mediumsAll) {
+    if (!m.active) continue;
+    const { pres, fal } = agg.get(m.id) || { pres: 0, fal: 0 };
+    const metaN = Number(m.carencia_meta_presencas);
+    const patch = {};
+    if (Number(m.presencas || 0) !== pres || Number(m.faltas || 0) !== fal) {
+      patch.presencas = pres;
+      patch.faltas = fal;
+    }
+    if (
+      m.group_type === "carencia" &&
+      Number.isFinite(metaN) &&
+      metaN > 0 &&
+      pres >= metaN
+    ) {
+      patch.group_type = "desenvolvimento";
+      patch.carencia_meta_presencas = null;
+    }
+    if (Object.keys(patch).length) {
+      const nm = nameOf(m);
+      try {
+        await sbPatch(`mediums?id=eq.${m.id}`, patch);
+        if (patch.group_type === "desenvolvimento") promoted.push(nm);
+      } catch (err) {
+        const t = err.message || String(err);
+        if (t.includes("carencia_meta_presencas")) {
+          const p2 = { ...patch };
+          delete p2.carencia_meta_presencas;
+          await sbPatch(`mediums?id=eq.${m.id}`, p2);
+          if (p2.group_type === "desenvolvimento") promoted.push(nm);
+        } else {
+          throw err;
+        }
+      }
+    }
+  }
+  return promoted;
+}
+
+function parseMetaCarenciaInput(val) {
+  const s = String(val ?? "").trim();
+  if (s === "") return null;
+  const n = parseInt(s, 10);
+  if (!Number.isFinite(n) || n < 1) return null;
+  return n;
 }
 
 async function loadRotacao() {
@@ -540,6 +625,16 @@ function makeRow(m) {
   if (m.group_type === "dirigente" && !podePsicografar(m)) {
     metaText += " | Sem psicografia";
   }
+  if (m.group_type === "carencia") {
+    const metaN = Number(m.carencia_meta_presencas);
+    if (Number.isFinite(metaN) && metaN > 0) {
+      const p = Number(m.presencas || 0);
+      const falta = Math.max(0, metaN - p);
+      metaText += falta > 0
+        ? ` | Faltam ${falta} presença(ões) para Desenvolvimento (meta ${metaN})`
+        : ` | Meta de ${metaN} presenças atingida — será migrado ao salvar a chamada`;
+    }
+  }
   meta.textContent = metaText;
 
   const leftText = document.createElement("div");
@@ -714,11 +809,23 @@ async function onSalvarTudo() {
     }
     if (rows.length) await sbUpsertChamadas(rows);
 
+    let promoted = [];
+    try {
+      promoted = await syncPresenceStatsFromChamadas();
+    } catch (e) {
+      console.warn("syncPresenceStatsFromChamadas", e);
+    }
+    await loadMediums();
+
     await persistRotacaoFromClicks();
     await loadRotacao();
     renderChamada();
 
-    setOk("Chamada salva e rotação atualizada.");
+    let msg = "Chamada salva e rotação atualizada.";
+    if (promoted.length) {
+      msg += ` Promovido(s) para Desenvolvimento (meta na carência): ${promoted.join(", ")}.`;
+    }
+    setOk(msg);
   } catch (e) {
     setErro("Erro ao salvar: " + e.message);
   }
@@ -732,6 +839,10 @@ async function onVerificar() {
   currentDateISO = iso;
   await loadChamadasForDate(iso);
   await loadRotacao(); // Sempre recarrega rotação para mostrar os PRÓXIMOS corretos
+  try {
+    await syncPresenceStatsFromChamadas();
+  } catch (_) { /* ignora */ }
+  await loadMediums();
   setOk(`Data carregada: ${iso}`);
   renderChamada();
 }
@@ -1009,17 +1120,50 @@ function buildParticipantEditPanel(m, onClose) {
     lblMesa.style.display = isInc ? "none" : "";
     if (isInc) chkMesa.checked = true;
   }
+  const inpMetaCarencia = document.createElement("input");
+  inpMetaCarencia.type = "number";
+  inpMetaCarencia.min = "1";
+  inpMetaCarencia.max = "999";
+  inpMetaCarencia.className = "input";
+  inpMetaCarencia.placeholder = "Ex.: 6 (vazio = sem meta)";
+  {
+    const metaN0 = Number(m.carencia_meta_presencas);
+    if (Number.isFinite(metaN0) && metaN0 > 0) inpMetaCarencia.value = String(metaN0);
+  }
+
+  const wrapMetaCarencia = document.createElement("div");
+  wrapMetaCarencia.className = "partEditField partEditMetaCarencia";
+  const lblMetaCar = document.createElement("label");
+  lblMetaCar.className = "label";
+  lblMetaCar.textContent = "Meta na carência (presenças até Desenvolvimento)";
+  const hintMetaCar = document.createElement("div");
+  hintMetaCar.className = "muted";
+  hintMetaCar.style.fontSize = "11px";
+  hintMetaCar.style.marginTop = "4px";
+  hintMetaCar.textContent =
+    "Conta P, M e PS em todas as chamadas salvas. Ao atingir, migra ao salvar a chamada.";
+  wrapMetaCarencia.appendChild(lblMetaCar);
+  wrapMetaCarencia.appendChild(inpMetaCarencia);
+  wrapMetaCarencia.appendChild(hintMetaCar);
+
+  function syncMetaCarenciaVisibility() {
+    wrapMetaCarencia.style.display = selGrupo.value === "carencia" ? "" : "none";
+  }
+
   function onGrupoChange() {
     syncPsicoVisibility();
     syncMesaIncorpVisibility();
+    syncMetaCarenciaVisibility();
   }
   selGrupo.addEventListener("change", onGrupoChange);
-  onGrupoChange();
 
   addField("Nome", inpNome);
   addField("Grupo", selGrupo);
   addField("Ordem grupo", inpOG);
   addField("Ordem na fila (sort_order)", inpSO);
+  g.appendChild(wrapMetaCarencia);
+
+  onGrupoChange();
 
   const checksWrap = document.createElement("div");
   checksWrap.className = "partEditChecks";
@@ -1053,6 +1197,8 @@ function buildParticipantEditPanel(m, onClose) {
       psicografia: group_type === "dirigente" && chkPsico.checked ? 1 : 0,
       ordem_grupo: parseOrdem(inpOG.value),
       sort_order: parseOrdem(inpSO.value),
+      carencia_meta_presencas:
+        group_type === "carencia" ? parseMetaCarenciaInput(inpMetaCarencia.value) : null,
     };
     try {
       let okMsg = `Participante atualizado: ${nome}`;
@@ -1060,12 +1206,18 @@ function buildParticipantEditPanel(m, onClose) {
         await sbPatch(`mediums?id=eq.${m.id}`, body);
       } catch (e1) {
         const t = e1.message || String(e1);
-        if (t.includes("pode_mesa") || t.includes("column")) {
+        if (t.includes("carencia_meta_presencas") && t.includes("column")) {
+          const b3 = { ...body };
+          delete b3.carencia_meta_presencas;
+          await sbPatch(`mediums?id=eq.${m.id}`, b3);
+          okMsg = `Salvo sem meta na carência. Rode Querys/adicionar_carencia_meta_presencas.sql no Supabase.`;
+        } else if (t.includes("pode_mesa") || t.includes("column")) {
           const b2 = { ...body };
           delete b2.pode_mesa;
+          delete b2.carencia_meta_presencas;
           b2.mesa = mesaFlag ? 1 : 0;
           await sbPatch(`mediums?id=eq.${m.id}`, b2);
-          okMsg = `Salvo (modo legado). Rode Querys/adicionar_pode_mesa.sql no Supabase.`;
+          okMsg = `Salvo (modo legado). Rode os scripts SQL no Supabase se precisar.`;
         } else {
           throw e1;
         }
@@ -1122,7 +1274,19 @@ function renderParticipants() {
     const mesaTxt =
       m.group_type === "incorporacao" ? "Rotação mesa: sim (todo o grupo)" : podeSentarMesa(m) ? "Mesa: sim" : "Mesa: não";
     const psTxt = m.group_type === "dirigente" ? (podePsicografar(m) ? " | Psico: sim" : " | Psico: não") : "";
-    metaEl.textContent = `Grupo: ${m.group_type} | Ativo: ${m.active ? "Sim" : "Não"} | ${mesaTxt}${psTxt} | Ordem: ${m.ordem_grupo ?? "-"} / ${m.sort_order ?? "-"}`;
+    let carTxt = "";
+    if (m.group_type === "carencia") {
+      const metaN = Number(m.carencia_meta_presencas);
+      if (Number.isFinite(metaN) && metaN > 0) {
+        const p = Number(m.presencas || 0);
+        const falta = Math.max(0, metaN - p);
+        carTxt =
+          falta > 0
+            ? ` | Carência: faltam ${falta} pres. (meta ${metaN})`
+            : ` | Carência: meta ${metaN} ok`;
+      }
+    }
+    metaEl.textContent = `Grupo: ${m.group_type} | Ativo: ${m.active ? "Sim" : "Não"} | ${mesaTxt}${psTxt}${carTxt} | Ordem: ${m.ordem_grupo ?? "-"} / ${m.sort_order ?? "-"}`;
 
     const leftText = document.createElement("div");
     leftText.className = "itemLeftText";
@@ -1212,27 +1376,42 @@ async function onAdicionarParticipante() {
     ordem_grupo: null,
     sort_order: null
   };
+  if (group_type === "carencia") {
+    const mc = parseMetaCarenciaInput(novoMetaCarencia.value);
+    if (mc != null) rowNew.carencia_meta_presencas = mc;
+  }
 
   try {
+    let okAdd = "Participante adicionado.";
     try {
       await sbPost("mediums", [rowNew], "return=minimal");
-      pOk("Participante adicionado.");
     } catch (e1) {
       const t = e1.message || String(e1);
-      if (t.includes("pode_mesa") || t.includes("column")) {
+      if (t.includes("carencia_meta_presencas")) {
+        const b = { ...rowNew };
+        delete b.carencia_meta_presencas;
+        await sbPost("mediums", [b], "return=minimal");
+        okAdd =
+          "Participante adicionado. Rode Querys/adicionar_carencia_meta_presencas.sql no Supabase para usar meta na carência.";
+      } else if (t.includes("pode_mesa") || t.includes("column")) {
         const legacy = { ...rowNew };
         delete legacy.pode_mesa;
+        delete legacy.carencia_meta_presencas;
         legacy.mesa = novoMesa.checked ? 1 : 0;
         await sbPost("mediums", [legacy], "return=minimal");
-        pOk("Participante adicionado. Rode Querys/adicionar_pode_mesa.sql no Supabase para o controle “pode mesa” completo.");
+        okAdd =
+          "Participante adicionado. Rode os scripts SQL no Supabase (pode_mesa / meta carência) se precisar.";
       } else {
         throw e1;
       }
     }
+    pOk(okAdd);
     novoNome.value = "";
     novoMesa.checked = false;
     novoPsico.checked = false;
     novoAtivo.checked = true;
+    novoMetaCarencia.value = "";
+    syncNovoMetaCarenciaWrap();
     await reloadParticipants();
   } catch (e) {
     pErr("Erro ao adicionar: " + e.message);
@@ -1272,13 +1451,28 @@ async function loadUltimaChamada() {
     await loadRotacao();
     await loadUltimaChamada();
 
-    setOk(currentDateISO ? `Última chamada: ${currentDateISO}. Próximos já excluem quem sentou.` : "Selecione a data e clique em Verificar data.");
+    let promovidos = [];
+    try {
+      promovidos = await syncPresenceStatsFromChamadas();
+    } catch (_) { /* ignora */ }
+    await loadMediums();
+
+    let msgInit = currentDateISO
+      ? `Última chamada: ${currentDateISO}.`
+      : "Selecione a data e clique em Verificar data.";
+    if (promovidos.length) {
+      msgInit += ` Promovido(s) para Desenvolvimento (meta na carência): ${promovidos.join(", ")}.`;
+    }
+    setOk(msgInit);
     renderChamada();
     renderParticipants();
   } catch (e) {
     setConn(false, "Erro");
     setErro("Falha ao conectar: " + e.message);
   }
+
+  novoGrupo.addEventListener("change", syncNovoMetaCarenciaWrap);
+  syncNovoMetaCarenciaWrap();
 
   btnVerificar.addEventListener("click", onVerificar);
   btnSalvar.addEventListener("click", onSalvarTudo);
