@@ -7,7 +7,7 @@
    - Incorporação: 4 próximos em verde | Desenvolvimento: 4 próximos em azul claro
    - Se faltou (F), rotação pula para o próximo disponível
    - Dirigentes: duas estrelas (Mesa + Psicografia), sempre visíveis
-   - Estatística "Vezes na mesa" (campo mesa); rotação usa pode_mesa quando existir
+   - Incorporação: todos na rotação da mesa; Desenvolvimento/Dirigente: pode_mesa (legado mesa)
    ============================================================ */
 
 console.log("APP.JS CARREGADO: 2026-03-16");
@@ -214,8 +214,11 @@ function podePsicografar(m) {
   return Number(m.psicografia ?? 0) > 0;
 }
 
+/* Incorporação: todos entram na rotação da mesa. Desenvolvimento e dirigentes: só com pode_mesa / legado. */
 function eligibleParaMesa(group_type) {
-  return eligible(group_type).filter(podeSentarMesa);
+  const list = eligible(group_type);
+  if (group_type === "incorporacao") return list;
+  return list.filter(podeSentarMesa);
 }
 
 /* regra: só dirigentes com psicografia habilitada entram na rotação de psico */
@@ -471,8 +474,22 @@ function makeRow(m) {
     starPsico.setAttribute("aria-label", okPsico ? "Estrela último na psicografia" : "Psico: habilitar em Participantes");
     starWrap.appendChild(lblP);
     starWrap.appendChild(starPsico);
-  } else if (m.group_type === "incorporacao" || m.group_type === "desenvolvimento") {
-    const groupKey = m.group_type === "incorporacao" ? "mesa_incorporacao" : "mesa_desenvolvimento";
+  } else if (m.group_type === "incorporacao") {
+    const groupKey = "mesa_incorporacao";
+    const starBtn = document.createElement("button");
+    starBtn.type = "button";
+    starBtn.className = "btnStar";
+    starBtn.textContent = "★";
+    starBtn.title = "Último a sentar na mesa (Incorporação) — a rotação parte do próximo";
+    starBtn.classList.toggle("starred", starLast[groupKey] === m.id);
+    starBtn.addEventListener("click", () => {
+      starLast[groupKey] = m.id;
+      renderChamada();
+    });
+    starBtn.setAttribute("aria-label", "Estrela último na mesa do grupo");
+    starWrap.appendChild(starBtn);
+  } else if (m.group_type === "desenvolvimento") {
+    const groupKey = "mesa_desenvolvimento";
     const okMesa = podeSentarMesa(m);
     const starBtn = document.createElement("button");
     starBtn.type = "button";
@@ -517,9 +534,11 @@ function makeRow(m) {
   if ((m.group_type === "incorporacao" || m.group_type === "desenvolvimento") && mesaCount > 0) {
     metaText += ` | Vezes na mesa: ${mesaCount}`;
   }
-  if (m.group_type === "dirigente" || m.group_type === "incorporacao" || m.group_type === "desenvolvimento") {
-    if (!podeSentarMesa(m)) metaText += " | Sem rotação na mesa";
-    if (m.group_type === "dirigente" && !podePsicografar(m)) metaText += " | Sem psicografia";
+  if ((m.group_type === "dirigente" || m.group_type === "desenvolvimento") && !podeSentarMesa(m)) {
+    metaText += " | Sem rotação na mesa";
+  }
+  if (m.group_type === "dirigente" && !podePsicografar(m)) {
+    metaText += " | Sem psicografia";
   }
   meta.textContent = metaText;
 
@@ -985,8 +1004,17 @@ function buildParticipantEditPanel(m, onClose) {
     lblPsico.style.display = isDir ? "" : "none";
     if (!isDir) chkPsico.checked = false;
   }
-  selGrupo.addEventListener("change", syncPsicoVisibility);
-  syncPsicoVisibility();
+  function syncMesaIncorpVisibility() {
+    const isInc = selGrupo.value === "incorporacao";
+    lblMesa.style.display = isInc ? "none" : "";
+    if (isInc) chkMesa.checked = true;
+  }
+  function onGrupoChange() {
+    syncPsicoVisibility();
+    syncMesaIncorpVisibility();
+  }
+  selGrupo.addEventListener("change", onGrupoChange);
+  onGrupoChange();
 
   addField("Nome", inpNome);
   addField("Grupo", selGrupo);
@@ -1016,11 +1044,12 @@ function buildParticipantEditPanel(m, onClose) {
     pOk("");
     pErr("");
     const group_type = selGrupo.value;
+    const mesaFlag = group_type === "incorporacao" ? true : chkMesa.checked;
     const body = {
       name: nome,
       group_type,
       active: chkAtivo.checked,
-      pode_mesa: chkMesa.checked,
+      pode_mesa: mesaFlag,
       psicografia: group_type === "dirigente" && chkPsico.checked ? 1 : 0,
       ordem_grupo: parseOrdem(inpOG.value),
       sort_order: parseOrdem(inpSO.value),
@@ -1034,7 +1063,7 @@ function buildParticipantEditPanel(m, onClose) {
         if (t.includes("pode_mesa") || t.includes("column")) {
           const b2 = { ...body };
           delete b2.pode_mesa;
-          b2.mesa = chkMesa.checked ? 1 : 0;
+          b2.mesa = mesaFlag ? 1 : 0;
           await sbPatch(`mediums?id=eq.${m.id}`, b2);
           okMsg = `Salvo (modo legado). Rode Querys/adicionar_pode_mesa.sql no Supabase.`;
         } else {
@@ -1090,7 +1119,8 @@ function renderParticipants() {
 
     const metaEl = document.createElement("div");
     metaEl.className = "itemMeta";
-    const mesaTxt = podeSentarMesa(m) ? "Mesa: sim" : "Mesa: não";
+    const mesaTxt =
+      m.group_type === "incorporacao" ? "Rotação mesa: sim (todo o grupo)" : podeSentarMesa(m) ? "Mesa: sim" : "Mesa: não";
     const psTxt = m.group_type === "dirigente" ? (podePsicografar(m) ? " | Psico: sim" : " | Psico: não") : "";
     metaEl.textContent = `Grupo: ${m.group_type} | Ativo: ${m.active ? "Sim" : "Não"} | ${mesaTxt}${psTxt} | Ordem: ${m.ordem_grupo ?? "-"} / ${m.sort_order ?? "-"}`;
 
