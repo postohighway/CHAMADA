@@ -1,6 +1,6 @@
 /* ============================================================
    CHAMADA DE MEDIUNS - app.js
-   Versao: 2026-03-16
+   Versao: 2026-03-26
    Destaques:
    - Ordem de fila por (ordem_grupo, sort_order, name)
    - Dirigente mesa: amarelo | Psicografia: vermelho
@@ -11,7 +11,7 @@
    - Carência: meta de presenças (P/M/PS nas chamadas) → migra auto para Desenvolvimento ao salvar
    ============================================================ */
 
-console.log("APP.JS CARREGADO: 2026-03-16");
+console.log("APP.JS CARREGADO: 2026-03-26");
 
 /* ====== SUPABASE ====== */
 const SUPABASE_URL = "https://nouzzyrevykdmnqifjjt.supabase.co";
@@ -191,6 +191,18 @@ function pOk(msg = "") { partMsg.textContent = msg; partErr.textContent = ""; }
 function pErr(msg = "") { partErr.textContent = msg; partMsg.textContent = ""; }
 
 function nameOf(m) { return m.name ?? m.nome ?? "(sem nome)"; }
+
+/* Postgres/Supabase pode devolver active como true/false ou 1/0 — evita === true que quebra o salvamento da chamada. */
+function isActiveMedium(m) {
+  const v = m == null ? null : m.active;
+  if (v === true || v === 1) return true;
+  if (v === false || v === 0 || v == null) return false;
+  if (typeof v === "string") {
+    const s = v.trim().toLowerCase();
+    return s === "1" || s === "true" || s === "t" || s === "yes";
+  }
+  return Boolean(v);
+}
 function numOrInf(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : Number.POSITIVE_INFINITY;
@@ -211,7 +223,7 @@ function byQueue(a, b) {
 
 function eligible(group_type) {
   return mediumsAll
-    .filter((m) => m.active === true && m.group_type === group_type)
+    .filter((m) => isActiveMedium(m) && m.group_type === group_type)
     .slice()
     .sort(byQueue);
 }
@@ -357,7 +369,7 @@ async function syncPresenceStatsFromChamadas() {
   }
 
   for (const m of mediumsAll) {
-    if (!m.active) continue;
+    if (!isActiveMedium(m)) continue;
     const { pres, fal } = agg.get(m.id) || { pres: 0, fal: 0 };
     const metaN = getCarenciaMetaN(m);
     const patch = {};
@@ -411,7 +423,7 @@ function getCarenciaMetaN(m) {
 /* Garante carencia_meta_presencas nos objetos (GET por id — evita filtro active=eq.true se active for 0/1 no PG). */
 async function mergeCarenciaMetaIntoMediums() {
   const ids = mediumsAll
-    .filter((m) => m.active && m.group_type === "carencia")
+    .filter((m) => isActiveMedium(m) && m.group_type === "carencia")
     .map((m) => m.id)
     .filter(Boolean);
   if (!ids.length) return;
@@ -492,7 +504,7 @@ function renderProximos() {
 
 /* ====== RESUMO ====== */
 function renderResumo() {
-  const active = mediumsAll.filter((m) => m.active === true);
+  const active = mediumsAll.filter((m) => isActiveMedium(m));
 
   let p = 0, m = 0, f = 0, ps = 0;
   const mesa = [];
@@ -545,7 +557,7 @@ function textoMigracaoCarenciaChamada(m) {
   const falta = Math.max(0, metaN - p);
   if (falta > 0) {
     const presWord = falta === 1 ? "presença" : "presenças";
-    return `Falta ${falta} ${presWord} para migrar`;
+    return `Falta ${falta} ${presWord} para migrar (meta ${metaN}; ${p} já contadas em chamadas salvas)`;
   }
   return "Meta atingida — salve a chamada para migrar automaticamente";
 }
@@ -863,7 +875,7 @@ async function onSalvarTudo() {
   if (!currentDateISO) return setErro("Selecione a data e clique em Verificar data.");
 
   try {
-    const active = mediumsAll.filter((m) => m.active === true);
+    const active = mediumsAll.filter((m) => isActiveMedium(m));
     const rows = [];
 
     for (const m of active) {
@@ -1364,8 +1376,8 @@ function renderParticipants() {
             }
             const falta = Math.max(0, metaN - p);
             return falta > 0
-              ? ` | Carência: faltam ${falta} pres. (meta ${metaN})`
-              : ` | Carência: meta ${metaN} ok`;
+              ? ` | Carência: faltam ${falta} pres. (meta ${metaN}; já ${p} nas chamadas salvas)`
+              : ` | Carência: meta ${metaN} ok — salve a chamada para migrar`;
           })()
         : "";
     metaEl.textContent = `Grupo: ${m.group_type} | Ativo: ${m.active ? "Sim" : "Não"} | ${mesaTxt}${psTxt}${carTxt} | Ordem: ${m.ordem_grupo ?? "-"} / ${m.sort_order ?? "-"}`;
