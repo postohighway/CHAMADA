@@ -142,8 +142,15 @@ const novoMetaCarencia = must("novoMetaCarencia");
 const novoMetaCarenciaWrap = must("novoMetaCarenciaWrap");
 const btnAdicionarParticipante = must("btnAdicionarParticipante");
 
-function syncNovoMetaCarenciaWrap() {
-  novoMetaCarenciaWrap.style.display = novoGrupo.value === "carencia" ? "" : "none";
+function syncNovoParticipanteFields() {
+  const g = novoGrupo.value;
+  novoMetaCarenciaWrap.style.display = g === "carencia" ? "" : "none";
+  const lblNovoMesa = novoMesa.closest("label");
+  if (lblNovoMesa) {
+    lblNovoMesa.style.display = g === "incorporacao" || g === "carencia" ? "none" : "";
+  }
+  if (g === "incorporacao") novoMesa.checked = true;
+  if (g === "carencia") novoMesa.checked = false;
 }
 
 /* ====== ESTADO ====== */
@@ -401,11 +408,16 @@ function getCarenciaMetaN(m) {
   return n;
 }
 
-/* Garante carencia_meta_presencas nos objetos (GET dedicado — o select amplo às vezes não devolve o campo). */
+/* Garante carencia_meta_presencas nos objetos (GET por id — evita filtro active=eq.true se active for 0/1 no PG). */
 async function mergeCarenciaMetaIntoMediums() {
+  const ids = mediumsAll
+    .filter((m) => m.active && m.group_type === "carencia")
+    .map((m) => m.id)
+    .filter(Boolean);
+  if (!ids.length) return;
   try {
     const rows = await sbGet(
-      "mediums?select=id,carencia_meta_presencas&group_type=eq.carencia&active=eq.true"
+      `mediums?select=id,carencia_meta_presencas&id=in.(${ids.join(",")})`
     );
     const map = new Map(rows.map((r) => [r.id, r.carencia_meta_presencas]));
     for (const m of mediumsAll) {
@@ -1160,10 +1172,17 @@ function buildParticipantEditPanel(m, onClose) {
     lblPsico.style.display = isDir ? "" : "none";
     if (!isDir) chkPsico.checked = false;
   }
-  function syncMesaIncorpVisibility() {
-    const isInc = selGrupo.value === "incorporacao";
-    lblMesa.style.display = isInc ? "none" : "";
-    if (isInc) chkMesa.checked = true;
+  function syncMesaPorGrupo() {
+    const g = selGrupo.value;
+    if (g === "incorporacao") {
+      lblMesa.style.display = "none";
+      chkMesa.checked = true;
+    } else if (g === "carencia") {
+      lblMesa.style.display = "none";
+      chkMesa.checked = false;
+    } else {
+      lblMesa.style.display = "";
+    }
   }
   const inpMetaCarencia = document.createElement("input");
   inpMetaCarencia.type = "number";
@@ -1197,7 +1216,7 @@ function buildParticipantEditPanel(m, onClose) {
 
   function onGrupoChange() {
     syncPsicoVisibility();
-    syncMesaIncorpVisibility();
+    syncMesaPorGrupo();
     syncMetaCarenciaVisibility();
   }
   selGrupo.addEventListener("change", onGrupoChange);
@@ -1233,7 +1252,8 @@ function buildParticipantEditPanel(m, onClose) {
     pOk("");
     pErr("");
     const group_type = selGrupo.value;
-    const mesaFlag = group_type === "incorporacao" ? true : chkMesa.checked;
+    const mesaFlag =
+      group_type === "incorporacao" ? true : group_type === "carencia" ? false : chkMesa.checked;
     const body = {
       name: nome,
       group_type,
@@ -1317,7 +1337,13 @@ function renderParticipants() {
     const metaEl = document.createElement("div");
     metaEl.className = "itemMeta";
     const mesaTxt =
-      m.group_type === "incorporacao" ? "Rotação mesa: sim (todo o grupo)" : podeSentarMesa(m) ? "Mesa: sim" : "Mesa: não";
+      m.group_type === "incorporacao"
+        ? "Rotação mesa: sim (todo o grupo)"
+        : m.group_type === "carencia"
+          ? "Mesa: não se aplica"
+          : podeSentarMesa(m)
+            ? "Mesa: sim"
+            : "Mesa: não";
     const psTxt = m.group_type === "dirigente" ? (podePsicografar(m) ? " | Psico: sim" : " | Psico: não") : "";
     const carTxt =
       m.group_type === "carencia"
@@ -1364,11 +1390,12 @@ function renderParticipants() {
       btnEdit.textContent = "Editar";
     };
 
-    btnEdit.addEventListener("click", () => {
+    btnEdit.addEventListener("click", async () => {
       if (editPanel) {
         closeEdit();
         return;
       }
+      await mergeCarenciaMetaIntoMediums();
       editPanel = buildParticipantEditPanel(m, closeEdit);
       wrap.appendChild(editPanel);
       btnEdit.textContent = "Fechar";
@@ -1411,11 +1438,13 @@ async function onAdicionarParticipante() {
   if (!name) return pErr("Informe o nome.");
   if (!group_type) return pErr("Informe o grupo.");
 
+  const mesaNovo =
+    group_type === "incorporacao" ? true : group_type === "carencia" ? false : novoMesa.checked;
   const rowNew = {
     name,
     group_type,
     active,
-    pode_mesa: novoMesa.checked,
+    pode_mesa: mesaNovo,
     mesa: 0,
     psicografia: group_type === "dirigente" && novoPsico.checked ? 1 : 0,
     presencas: 0,
@@ -1444,7 +1473,7 @@ async function onAdicionarParticipante() {
         const legacy = { ...rowNew };
         delete legacy.pode_mesa;
         delete legacy.carencia_meta_presencas;
-        legacy.mesa = novoMesa.checked ? 1 : 0;
+        legacy.mesa = mesaNovo ? 1 : 0;
         await sbPost("mediums", [legacy], "return=minimal");
         okAdd =
           "Participante adicionado. Rode os scripts SQL no Supabase (pode_mesa / meta carência) se precisar.";
@@ -1458,7 +1487,7 @@ async function onAdicionarParticipante() {
     novoPsico.checked = false;
     novoAtivo.checked = true;
     novoMetaCarencia.value = "";
-    syncNovoMetaCarenciaWrap();
+    syncNovoParticipanteFields();
     await reloadParticipants();
   } catch (e) {
     pErr("Erro ao adicionar: " + e.message);
@@ -1472,7 +1501,11 @@ function showTab(which) {
   viewParticipantes.style.display = isChamada ? "none" : "";
   tabChamada.classList.toggle("active", isChamada);
   tabParticipantes.classList.toggle("active", !isChamada);
-  if (!isChamada) renderParticipants();
+  if (!isChamada) {
+    renderParticipants();
+  } else {
+    mergeCarenciaMetaIntoMediums().then(() => renderChamada());
+  }
 }
 
 /* Carrega a última chamada para pré-preencher data e status */
@@ -1518,8 +1551,8 @@ async function loadUltimaChamada() {
     setErro("Falha ao conectar: " + e.message);
   }
 
-  novoGrupo.addEventListener("change", syncNovoMetaCarenciaWrap);
-  syncNovoMetaCarenciaWrap();
+  novoGrupo.addEventListener("change", syncNovoParticipanteFields);
+  syncNovoParticipanteFields();
 
   btnVerificar.addEventListener("click", onVerificar);
   btnSalvar.addEventListener("click", onSalvarTudo);
