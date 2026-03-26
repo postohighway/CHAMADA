@@ -415,69 +415,82 @@ function makeRow(m) {
   const left = document.createElement("div");
   left.className = "itemLeft";
 
+  const starTipMesaOff =
+    "Marque “Pode sentar na mesa” em Participantes → Editar para usar esta estrela.";
+  const starTipPsicoOff =
+    "Marque “Pode psicografar” em Participantes → Editar para usar esta estrela.";
+
   const starWrap = document.createElement("div");
   if (m.group_type === "dirigente") {
     starWrap.className = "starGroup";
     const okMesa = podeSentarMesa(m);
     const okPsico = podePsicografar(m);
 
+    const lblM = document.createElement("span");
+    lblM.className = "starLabel";
+    lblM.textContent = "Mesa";
+    const starMesa = document.createElement("button");
+    starMesa.type = "button";
+    starMesa.className = "btnStar btnStarMesa";
+    starMesa.textContent = "★";
     if (okMesa) {
-      const lblM = document.createElement("span");
-      lblM.className = "starLabel";
-      lblM.textContent = "Mesa";
-      const starMesa = document.createElement("button");
-      starMesa.type = "button";
-      starMesa.className = "btnStar btnStarMesa";
       starMesa.title = "Último a dirigir na MESA — a rotação de mesa parte do próximo";
-      starMesa.setAttribute("aria-label", "Estrela último na mesa");
-      starMesa.textContent = "★";
       starMesa.classList.toggle("starred", starLast.mesa_dirigente === m.id);
       starMesa.addEventListener("click", () => {
         starLast.mesa_dirigente = m.id;
         renderChamada();
       });
-      starWrap.appendChild(lblM);
-      starWrap.appendChild(starMesa);
+    } else {
+      starMesa.disabled = true;
+      starMesa.classList.add("btnStarOff");
+      starMesa.title = starTipMesaOff;
     }
+    starMesa.setAttribute("aria-label", okMesa ? "Estrela último na mesa" : "Mesa: habilitar em Participantes");
+    starWrap.appendChild(lblM);
+    starWrap.appendChild(starMesa);
 
+    const lblP = document.createElement("span");
+    lblP.className = "starLabel";
+    lblP.textContent = "Psico";
+    const starPsico = document.createElement("button");
+    starPsico.type = "button";
+    starPsico.className = "btnStar btnStarPsico";
+    starPsico.textContent = "★";
     if (okPsico) {
-      const lblP = document.createElement("span");
-      lblP.className = "starLabel";
-      lblP.textContent = "Psico";
-      const starPsico = document.createElement("button");
-      starPsico.type = "button";
-      starPsico.className = "btnStar btnStarPsico";
       starPsico.title = "Último na PSICOGRAFIA — a rotação de psico parte do próximo";
-      starPsico.setAttribute("aria-label", "Estrela último na psicografia");
-      starPsico.textContent = "★";
       starPsico.classList.toggle("starred", starLast.psicografia === m.id);
       starPsico.addEventListener("click", () => {
         starLast.psicografia = m.id;
         renderChamada();
       });
-      starWrap.appendChild(lblP);
-      starWrap.appendChild(starPsico);
+    } else {
+      starPsico.disabled = true;
+      starPsico.classList.add("btnStarOff");
+      starPsico.title = starTipPsicoOff;
     }
-
-    if (!okMesa && !okPsico) {
-      const ph = document.createElement("div");
-      ph.style.visibility = "hidden";
-      ph.style.width = "28px";
-      ph.style.minHeight = "28px";
-      starWrap.appendChild(ph);
-    }
-  } else if ((m.group_type === "incorporacao" || m.group_type === "desenvolvimento") && podeSentarMesa(m)) {
+    starPsico.setAttribute("aria-label", okPsico ? "Estrela último na psicografia" : "Psico: habilitar em Participantes");
+    starWrap.appendChild(lblP);
+    starWrap.appendChild(starPsico);
+  } else if (m.group_type === "incorporacao" || m.group_type === "desenvolvimento") {
     const groupKey = m.group_type === "incorporacao" ? "mesa_incorporacao" : "mesa_desenvolvimento";
+    const okMesa = podeSentarMesa(m);
     const starBtn = document.createElement("button");
     starBtn.type = "button";
     starBtn.className = "btnStar";
-    starBtn.title = "Último a sentar na mesa neste grupo — a rotação parte do próximo";
     starBtn.textContent = "★";
-    starBtn.classList.toggle("starred", starLast[groupKey] === m.id);
-    starBtn.addEventListener("click", () => {
-      starLast[groupKey] = m.id;
-      renderChamada();
-    });
+    if (okMesa) {
+      starBtn.title = "Último a sentar na mesa neste grupo — a rotação parte do próximo";
+      starBtn.classList.toggle("starred", starLast[groupKey] === m.id);
+      starBtn.addEventListener("click", () => {
+        starLast[groupKey] = m.id;
+        renderChamada();
+      });
+    } else {
+      starBtn.disabled = true;
+      starBtn.classList.add("btnStarOff");
+      starBtn.title = starTipMesaOff;
+    }
+    starBtn.setAttribute("aria-label", okMesa ? "Estrela último na mesa do grupo" : "Habilitar mesa em Participantes");
     starWrap.appendChild(starBtn);
   } else {
     const placeholder = document.createElement("div");
@@ -563,7 +576,7 @@ function makeRow(m) {
 
   if (m.group_type === "carencia") {
     const stack = document.createElement("div");
-    stack.className = "chamadaCarenciaRight";
+    stack.className = "chamadaPromocaoStack";
     stack.appendChild(radios);
 
     const btnDev = document.createElement("button");
@@ -588,6 +601,34 @@ function makeRow(m) {
       }
     });
     stack.appendChild(btnDev);
+    right.appendChild(stack);
+  } else if (m.group_type === "desenvolvimento") {
+    const stack = document.createElement("div");
+    stack.className = "chamadaPromocaoStack";
+    stack.appendChild(radios);
+
+    const btnInc = document.createElement("button");
+    btnInc.type = "button";
+    btnInc.className = "btn small btnPassarIncorporacao";
+    btnInc.textContent = "Passar para Incorporação";
+    btnInc.title = "Altera o grupo desta pessoa de Desenvolvimento para Médiuns de Incorporação (após incorporar)";
+    btnInc.addEventListener("click", async () => {
+      const n = nameOf(m);
+      const ok = confirm(
+        `Passar "${n}" de Desenvolvimento para Incorporação?\n\nUse quando a pessoa já tiver incorporado. Ela passará a aparecer na lista de Incorporação e na rotação da mesa desse grupo (se “pode sentar na mesa” estiver marcado em Participantes).`
+      );
+      if (!ok) return;
+      try {
+        await sbPatch(`mediums?id=eq.${m.id}`, { group_type: "incorporacao" });
+        setOk(`"${n}" agora está em Incorporação.`);
+        setErro("");
+        await loadMediums();
+        renderChamada();
+      } catch (e) {
+        setErro("Não foi possível alterar o grupo: " + (e.message || String(e)));
+      }
+    });
+    stack.appendChild(btnInc);
     right.appendChild(stack);
   } else {
     right.appendChild(radios);

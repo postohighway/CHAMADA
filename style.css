@@ -223,6 +223,12 @@ main{padding:16px 0 40px}
 }
 .btnStar:hover{ color:var(--warn); border-color:rgba(245,158,11,.4); background:rgba(245,158,11,.12) }
 .btnStar.starred{ color:var(--warn); border-color:rgba(245,158,11,.5); background:rgba(245,158,11,.2) }
+.btnStar.btnStarOff,.btnStar:disabled{
+  opacity:.38;
+  cursor:not-allowed;
+  pointer-events:auto;
+}
+.btnStar.btnStarOff:hover,.btnStar:disabled:hover{ color:var(--muted); border-color:var(--line); background:rgba(18,47,65,.6) }
 /* Dirigentes: segunda estrela = psicografia (vermelho) */
 .starGroup{display:flex; flex-direction:column; gap:4px; flex-shrink:0}
 .starGroup .btnStar{ width:28px; height:26px; font-size:14px }
@@ -257,21 +263,29 @@ main{padding:16px 0 40px}
 .radioGroup input:checked + .radioLbl .dot{background:rgba(59,130,246,.85)}
 .radioTxt{font-size:12px}
 
-/* Carência na chamada: P/M/F + passar para desenvolvimento */
-.chamadaCarenciaRight{
+/* Carência / Desenvolvimento: P/M/F + botão de mudança de grupo */
+.chamadaPromocaoStack{
   display:flex;
   flex-direction:column;
   align-items:flex-end;
   gap:10px;
   max-width:100%;
 }
-.btnPassarDesenvolvimento{
+.btnPassarDesenvolvimento,.btnPassarIncorporacao{
   white-space:normal;
   text-align:center;
   line-height:1.25;
   max-width:200px;
 }
-.hintCarencia{margin:4px 0 10px; font-size:12px; line-height:1.45}
+.btnPassarIncorporacao{
+  border-color:rgba(16,185,129,.45);
+  background:rgba(16,185,129,.12);
+}
+.btnPassarIncorporacao:hover{
+  border-color:rgba(16,185,129,.55);
+  background:rgba(16,185,129,.18);
+}
+.hintCarencia,.hintDesenvolvimento{margin:4px 0 10px; font-size:12px; line-height:1.45}
 
 /* ===== Destaques de "próximos" (linhas pintadas no corpo da chamada) ===== */
 .itemRow.nextMesa{

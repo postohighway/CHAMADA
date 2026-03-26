@@ -87,6 +87,7 @@
         <div class="hint">
           Destaques: amarelo = dirigente (mesa); vermelho = psicografia; verde = 4 próximos incorporação; azul claro = 4 próximos desenvolvimento.
           Dirigentes: duas estrelas — Mesa (amarela) e Psico (vermelha), independentes do P/M/F do dia.
+          Estrela apagada/desabilitada: falta marcar “Pode sentar na mesa” (ou psico) em Participantes → Editar.
         </div>
       </div>
 
@@ -97,6 +98,7 @@
       <div id="listaIncorporacao" class="list"></div>
 
       <h2 class="sectionTitle">Médiuns em Desenvolvimento</h2>
+      <p class="muted hintDesenvolvimento">Quem já <strong>incorporou</strong> pode ser enviado para <strong>Incorporação</strong> pelo botão na linha. O restante das edições continua em <strong>Participantes</strong> → Editar.</p>
       <div id="listaDesenvolvimento" class="list"></div>
 
       <h2 class="sectionTitle">Médiuns em Carência</h2>
@@ -144,7 +146,7 @@
         </div>
 
         <p class="muted" style="margin:8px 0 0; font-size:12px;">
-          <strong>Editar</strong>: nome, grupo (ex. trocar Carência → Incorporação), ativo, ordem e se pode sentar na mesa. Na aba Chamada, quem está em Carência também tem o botão rápido <strong>Passar para Desenvolvimento</strong>. Se der erro ao salvar, rode <code>Querys/adicionar_pode_mesa.sql</code> no Supabase.
+          <strong>Editar</strong>: nome, grupo, ativo, ordem e se pode sentar na mesa. Na Chamada: <strong>Carência → Desenvolvimento</strong> e <strong>Desenvolvimento → Incorporação</strong> pelos botões nas linhas. Se der erro ao salvar, rode <code>Querys/adicionar_pode_mesa.sql</code> no Supabase.
         </p>
         <div id="listaParticipantes" class="list"></div>
 
