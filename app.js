@@ -534,19 +534,20 @@ function statusParaResumo(med) {
   return st;
 }
 
-/* Texto de acompanhamento meta carência → desenvolvimento */
-function textoMetaCarencia(m) {
+/* Segunda linha na Chamada (só carência): meta de migração para Desenvolvimento */
+function textoMigracaoCarenciaChamada(m) {
   if (m.group_type !== "carencia") return "";
   const metaN = getCarenciaMetaN(m);
   const p = Number(m.presencas || 0);
   if (metaN == null) {
-    return " | Carência: defina em Participantes → Editar quantas presenças (P ou PS) são necessárias para ir a Desenvolvimento";
+    return "Carência: defina em Participantes → Editar quantas presenças (P ou PS) são necessárias para ir a Desenvolvimento";
   }
   const falta = Math.max(0, metaN - p);
   if (falta > 0) {
-    return ` | Faltam ${falta} presença(ões) para Desenvolvimento (meta ${metaN}; contadas ${p} nas chamadas)`;
+    const presWord = falta === 1 ? "presença" : "presenças";
+    return `Falta ${falta} ${presWord} para migrar`;
   }
-  return ` | Meta de ${metaN} presenças atingida — salve a chamada para migrar automaticamente`;
+  return "Meta atingida — salve a chamada para migrar automaticamente";
 }
 
 function makeRow(m) {
@@ -679,6 +680,8 @@ function makeRow(m) {
 
   const meta = document.createElement("div");
   meta.className = "itemMeta";
+  const lineStats = document.createElement("div");
+  lineStats.className = "itemMetaLine itemMetaStats";
   let metaText = `Presenças: ${pres} | Faltas: ${falt} | Presença: ${presPct}% | Faltas: ${faltPct}%`;
   if ((m.group_type === "incorporacao" || m.group_type === "desenvolvimento") && mesaCount > 0) {
     metaText += ` | Vezes na mesa: ${mesaCount}`;
@@ -689,8 +692,14 @@ function makeRow(m) {
   if (m.group_type === "dirigente" && !podePsicografar(m)) {
     metaText += " | Sem psicografia";
   }
-  metaText += textoMetaCarencia(m);
-  meta.textContent = metaText;
+  lineStats.textContent = metaText;
+  meta.appendChild(lineStats);
+  if (m.group_type === "carencia") {
+    const lineCar = document.createElement("div");
+    lineCar.className = "itemMetaLine itemMetaMigracao";
+    lineCar.textContent = textoMigracaoCarenciaChamada(m);
+    meta.appendChild(lineCar);
+  }
 
   const leftText = document.createElement("div");
   leftText.className = "itemLeftText";
