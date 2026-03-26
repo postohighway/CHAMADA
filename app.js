@@ -463,7 +463,7 @@ function renderResumo() {
   const mesa = [];
 
   for (const med of active) {
-    const st = (chamadasMap.get(med.id) || "").toUpperCase();
+    const st = statusParaResumo(med);
     if (st === "P") p++;
     if (st === "M") { m++; mesa.push(nameOf(med)); }
     if (st === "F") f++;
@@ -480,9 +480,38 @@ function renderResumo() {
 
 /* ====== LISTA / RADIOS ====== */
 function buildStatusOptions(m) {
+  if (m.group_type === "carencia") return ["P", "F"];
   const base = ["P", "M", "F"];
   if (m.group_type === "dirigente") base.push("PS");
   return base;
+}
+
+/* Carência não usa M; se no mapa ainda houver M (legado), trata como P. */
+function normalizarStatusCarencia(m) {
+  if (m.group_type !== "carencia") return;
+  const st = (chamadasMap.get(m.id) || "").toUpperCase();
+  if (st === "M") chamadasMap.set(m.id, "P");
+}
+
+function statusParaResumo(med) {
+  const st = (chamadasMap.get(med.id) || "").toUpperCase();
+  if (med.group_type === "carencia" && st === "M") return "P";
+  return st;
+}
+
+/* Texto de acompanhamento meta carência → desenvolvimento */
+function textoMetaCarencia(m) {
+  if (m.group_type !== "carencia") return "";
+  const metaN = Number(m.carencia_meta_presencas);
+  const p = Number(m.presencas || 0);
+  if (!Number.isFinite(metaN) || metaN < 1) {
+    return " | Carência: defina em Participantes → Editar quantas presenças (P ou PS) são necessárias para ir a Desenvolvimento";
+  }
+  const falta = Math.max(0, metaN - p);
+  if (falta > 0) {
+    return ` | Faltam ${falta} presença(ões) para Desenvolvimento (meta ${metaN}; contadas ${p} nas chamadas)`;
+  }
+  return ` | Meta de ${metaN} presenças atingida — salve a chamada para migrar automaticamente`;
 }
 
 function makeRow(m) {
@@ -625,16 +654,7 @@ function makeRow(m) {
   if (m.group_type === "dirigente" && !podePsicografar(m)) {
     metaText += " | Sem psicografia";
   }
-  if (m.group_type === "carencia") {
-    const metaN = Number(m.carencia_meta_presencas);
-    if (Number.isFinite(metaN) && metaN > 0) {
-      const p = Number(m.presencas || 0);
-      const falta = Math.max(0, metaN - p);
-      metaText += falta > 0
-        ? ` | Faltam ${falta} presença(ões) para Desenvolvimento (meta ${metaN})`
-        : ` | Meta de ${metaN} presenças atingida — será migrado ao salvar a chamada`;
-    }
-  }
+  metaText += textoMetaCarencia(m);
   meta.textContent = metaText;
 
   const leftText = document.createElement("div");
@@ -650,6 +670,7 @@ function makeRow(m) {
   const radios = document.createElement("div");
   radios.className = "radioGroup";
 
+  normalizarStatusCarencia(m);
   const current = (chamadasMap.get(m.id) || "").toUpperCase();
 
   for (const s of buildStatusOptions(m)) {
@@ -802,7 +823,8 @@ async function onSalvarTudo() {
     const rows = [];
 
     for (const m of active) {
-      const st = (chamadasMap.get(m.id) || "").toUpperCase();
+      let st = (chamadasMap.get(m.id) || "").toUpperCase();
+      if (m.group_type === "carencia" && st === "M") st = "P";
       if (["P", "M", "F", "PS"].includes(st)) {
         rows.push({ medium_id: m.id, data: currentDateISO, status: st });
       }
@@ -1274,18 +1296,20 @@ function renderParticipants() {
     const mesaTxt =
       m.group_type === "incorporacao" ? "Rotação mesa: sim (todo o grupo)" : podeSentarMesa(m) ? "Mesa: sim" : "Mesa: não";
     const psTxt = m.group_type === "dirigente" ? (podePsicografar(m) ? " | Psico: sim" : " | Psico: não") : "";
-    let carTxt = "";
-    if (m.group_type === "carencia") {
-      const metaN = Number(m.carencia_meta_presencas);
-      if (Number.isFinite(metaN) && metaN > 0) {
-        const p = Number(m.presencas || 0);
-        const falta = Math.max(0, metaN - p);
-        carTxt =
-          falta > 0
-            ? ` | Carência: faltam ${falta} pres. (meta ${metaN})`
-            : ` | Carência: meta ${metaN} ok`;
-      }
-    }
+    const carTxt =
+      m.group_type === "carencia"
+        ? (() => {
+            const metaN = Number(m.carencia_meta_presencas);
+            const p = Number(m.presencas || 0);
+            if (!Number.isFinite(metaN) || metaN < 1) {
+              return " | Carência: sem meta — edite e informe presenças até Dev.";
+            }
+            const falta = Math.max(0, metaN - p);
+            return falta > 0
+              ? ` | Carência: faltam ${falta} pres. (meta ${metaN})`
+              : ` | Carência: meta ${metaN} ok`;
+          })()
+        : "";
     metaEl.textContent = `Grupo: ${m.group_type} | Ativo: ${m.active ? "Sim" : "Não"} | ${mesaTxt}${psTxt}${carTxt} | Ordem: ${m.ordem_grupo ?? "-"} / ${m.sort_order ?? "-"}`;
 
     const leftText = document.createElement("div");
